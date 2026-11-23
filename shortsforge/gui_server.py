@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import platform
+import shutil
 import subprocess
 import threading
 import time
@@ -45,12 +46,13 @@ class JobRecord:
     job_id: str
     kind: str  # "autopilot" | "new" | "render"
     project_name: str
-    status: str = "running"  # "running" | "completed" | "error"
+    status: str = "running"  # "running" | "completed" | "cancelled" | "error"
     message: str = "Starting..."
     logs: List[str] = field(default_factory=list)
     started_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
     error: str = ""
+    cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -62,6 +64,7 @@ class JobRecord:
             "logs": self.logs[-120:],
             "elapsed_sec": round((self.finished_at or time.time()) - self.started_at, 1),
             "error": self.error,
+            "cancelling": self.cancel_event.is_set(),
         }
 
 
@@ -75,6 +78,15 @@ class JobManager:
     def get(self, job_id: str) -> Optional[JobRecord]:
         with self._lock:
             return self._jobs.get(job_id)
+
+    def cancel(self, job_id: str) -> Optional[JobRecord]:
+        with self._lock:
+            rec = self._jobs.get(job_id)
+            if rec is not None and rec.status == "running":
+                rec.cancel_event.set()
+                rec.message = "Stopping after current clip finishes..."
+                rec.logs.append("[CANCEL] Stop requested by user...")
+            return rec
 
     def list_recent(self) -> List[Dict[str, Any]]:
         with self._lock:
@@ -91,9 +103,14 @@ class JobManager:
             try:
                 rec.logs.append(f"[{kind.upper()}] Started job...")
                 target_fn(rec)
-                rec.status = "completed"
-                rec.message = "Completed! Your viral Shorts are ready."
-                rec.logs.append(f"[{kind.upper()}] Completed successfully.")
+                if rec.cancel_event.is_set():
+                    rec.status = "cancelled"
+                    rec.message = "Stopped cleanly by user."
+                    rec.logs.append(f"[{kind.upper()}] Stopped cleanly.")
+                else:
+                    rec.status = "completed"
+                    rec.message = "Completed! Your viral Shorts are ready."
+                    rec.logs.append(f"[{kind.upper()}] Completed successfully.")
             except Exception as exc:  # noqa: BLE001
                 rec.status = "error"
                 rec.error = str(exc)
@@ -213,8 +230,12 @@ def _get_project_detail(config: AppConfig, project_name: str) -> Optional[Dict[s
             try:
                 em = ClipExportMetadata.model_validate_json(mf.read_text(encoding="utf-8"))
                 ed = em.model_dump()
-                ed["video_url"] = f"/media/output/{project_name}/{em.output_video}"
-                ed["thumbnail_url"] = f"/media/output/{project_name}/{em.thumbnail}"
+                vid_p = ws.output_dir / em.output_video
+                th_p = ws.output_dir / em.thumbnail
+                v_tag = int(vid_p.stat().st_mtime * 1000) if vid_p.exists() else 0
+                t_tag = int(th_p.stat().st_mtime * 1000) if th_p.exists() else 0
+                ed["video_url"] = f"/media/output/{project_name}/{em.output_video}?v={v_tag}"
+                ed["thumbnail_url"] = f"/media/output/{project_name}/{em.thumbnail}?v={t_tag}"
                 outputs.append(ed)
             except Exception:  # noqa: BLE001
                 continue
@@ -329,7 +350,7 @@ def create_gui_server(
             raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
             return json.loads(raw) if raw.strip() else {}
 
-        def _serve_file_with_range(self, file_path: Path) -> None:
+        def _serve_file_with_range(self, file_path: Path, no_cache: bool = False) -> None:
             if not file_path.is_file():
                 self.send_error(404, "File not found")
                 return
@@ -338,43 +359,50 @@ def create_gui_server(
             ctype = ctype or "application/octet-stream"
             range_hdr = self.headers.get("Range")
 
-            if range_hdr and range_hdr.startswith("bytes="):
-                spec = range_hdr.replace("bytes=", "").split(",")[0].strip()
-                parts = spec.split("-")
-                start = int(parts[0]) if parts[0] else 0
-                end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
-                start = max(0, min(start, file_size - 1))
-                end = max(start, min(end, file_size - 1))
-                length = end - start + 1
+            try:
+                if range_hdr and range_hdr.startswith("bytes="):
+                    spec = range_hdr.replace("bytes=", "").split(",")[0].strip()
+                    parts = spec.split("-")
+                    start = int(parts[0]) if parts[0] else 0
+                    end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
+                    start = max(0, min(start, file_size - 1))
+                    end = max(start, min(end, file_size - 1))
+                    length = end - start + 1
 
-                self.send_response(206)
+                    self.send_response(206)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+                    self.send_header("Content-Length", str(length))
+                    if no_cache:
+                        self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                    with file_path.open("rb") as fh:
+                        fh.seek(start)
+                        remaining = length
+                        while remaining > 0:
+                            chunk = fh.read(min(65536, remaining))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            remaining -= len(chunk)
+                    return
+
+                self.send_response(200)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Accept-Ranges", "bytes")
-                self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
-                self.send_header("Content-Length", str(length))
+                self.send_header("Content-Length", str(file_size))
+                if no_cache:
+                    self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
                 with file_path.open("rb") as fh:
-                    fh.seek(start)
-                    remaining = length
-                    while remaining > 0:
-                        chunk = fh.read(min(65536, remaining))
+                    while True:
+                        chunk = fh.read(65536)
                         if not chunk:
                             break
                         self.wfile.write(chunk)
-                        remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return
-
-            self.send_response(200)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Accept-Ranges", "bytes")
-            self.send_header("Content-Length", str(file_size))
-            self.end_headers()
-            with file_path.open("rb") as fh:
-                while True:
-                    chunk = fh.read(65536)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -408,7 +436,7 @@ def create_gui_server(
                 if target is None or not target.is_file():
                     self.send_error(404, "Static asset not found")
                     return
-                self._serve_file_with_range(target)
+                self._serve_file_with_range(target, no_cache=True)
                 return
 
             if path == "/api/projects":
@@ -460,7 +488,7 @@ def create_gui_server(
                 if target is None:
                     self.send_error(403)
                     return
-                self._serve_file_with_range(target)
+                self._serve_file_with_range(target, no_cache=True)
                 return
 
             if path.startswith("/media/output/"):
@@ -474,7 +502,7 @@ def create_gui_server(
                 if target is None:
                     self.send_error(403)
                     return
-                self._serve_file_with_range(target)
+                self._serve_file_with_range(target, no_cache=True)
                 return
 
             self.send_error(404)
@@ -523,18 +551,47 @@ def create_gui_server(
                         rec.message = msg
                         rec.logs.append(msg)
 
+                    def _on_proj(pname: str) -> None:
+                        rec.project_name = pname
+
                     proj_name, exported = run_autopilot_from_source(
                         source=source,
                         config=cfg,
                         max_clips=max_clips,
                         force=force,
                         on_progress=_prog,
+                        should_cancel=rec.cancel_event.is_set,
+                        on_project_detected=_on_proj,
                     )
                     rec.project_name = proj_name
                     rec.logs.append(f"Done! Rendered {len(exported)} viral Short(s) in outputs/{proj_name}/")
 
                 rec = jobs.start_job("autopilot", "auto", _run_auto)
                 self._send_json(202, rec.to_dict())
+                return
+
+            if path.startswith("/api/jobs/") and path.endswith("/cancel"):
+                job_id = path[len("/api/jobs/") : -len("/cancel")].strip("/")
+                rec = jobs.cancel(job_id)
+                if rec is None:
+                    self._send_json(404, {"error": "Job not found"})
+                else:
+                    self._send_json(200, rec.to_dict())
+                return
+
+            if path.startswith("/api/projects/") and path.endswith("/delete"):
+                proj_name = path[len("/api/projects/") : -len("/delete")].strip("/")
+                cfg = self._cfg()
+                p_dir = _safe_resolve_under(cfg.projects_root(), proj_name)
+                o_dir = _safe_resolve_under(cfg.outputs_root(), proj_name)
+                if p_dir is None or o_dir is None or not proj_name or "/" in proj_name or "\\" in proj_name:
+                    self._send_json(400, {"error": "Invalid project name"})
+                    return
+                if p_dir.exists() and p_dir != cfg.projects_root().resolve():
+                    shutil.rmtree(p_dir, ignore_errors=True)
+                if o_dir.exists() and o_dir != cfg.outputs_root().resolve():
+                    shutil.rmtree(o_dir, ignore_errors=True)
+                self._send_json(200, {"status": "deleted", "project_name": proj_name})
                 return
 
             if path.startswith("/api/projects/") and path.endswith("/decisions"):
@@ -639,6 +696,7 @@ def create_gui_server(
                         min_score=int(min_score) if min_score is not None else None,
                         force=force,
                         on_progress=_prog,
+                        should_cancel=rec.cancel_event.is_set,
                     )
                     rec.logs.append(f"Exported {len(exported)} Short(s) to outputs/{name}/")
 

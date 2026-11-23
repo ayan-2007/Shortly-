@@ -360,6 +360,11 @@ def render_single_short(
     meta_json_path = output_dir / f"{base_name}_metadata.json"
     meta_txt_path = output_dir / f"{base_name}_metadata.txt"
 
+    # Remove stale files from prior renders of the same clip_id with a different slug so duplicates never appear
+    for old_f in output_dir.glob(f"{candidate.id}_*"):
+        if not old_f.name.startswith(f"{base_name}.") and not old_f.name.startswith(f"{base_name}_"):
+            old_f.unlink(missing_ok=True)
+
     source_path = Path(metadata.local_video_path)
     main_audio_wav = clip_work / "main_audio.wav"
     peak_offset_sec = max(0.0, candidate.peak_start - candidate.start)

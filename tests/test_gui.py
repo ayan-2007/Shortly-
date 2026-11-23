@@ -144,7 +144,8 @@ def test_gui_server_endpoints_and_range_streaming(tmp_path: Path) -> None:
             cfg_resp = json.loads(resp.read().decode("utf-8"))
             assert isinstance(cfg_resp["keys"]["GEMINI_API_KEY"], bool)
 
-        # 6. Video Range request returns HTTP 206 Partial Content
+        # 6. Video Range request returns HTTP 206 Partial Content & output URLs are cache-busted
+        assert "?v=" in detail["outputs"][0]["video_url"]
         r_req = urllib.request.Request(
             f"{base}/media/output/demo_ep/clip_01_demo.mp4",
             headers={"Range": "bytes=0-15"},
@@ -152,6 +153,18 @@ def test_gui_server_endpoints_and_range_streaming(tmp_path: Path) -> None:
         with urllib.request.urlopen(r_req) as resp:
             assert resp.status == 206
             assert resp.read() == b"0123456789ABCDEF"
+
+        # 7. Project delete endpoint removes project & output folders cleanly
+        del_req = urllib.request.Request(
+            f"{base}/api/projects/demo_ep/delete",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(del_req) as resp:
+            assert resp.status == 200
+        assert not ws.project_dir.exists()
+        assert not ws.output_dir.exists()
     finally:
         server.shutdown()
         server.server_close()

@@ -79,16 +79,26 @@ def normalize_to_lufs(
     else:
         af = f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}"
 
-    run_ffmpeg([
+    p2 = run_ffmpeg([
         "-i", str(input_wav),
-        "-af", af,
+        "-af", f"{af}:print_format=json",
         "-ar", "48000",
         "-ac", "2",
         "-c:a", "pcm_s16le",
         str(output_wav),
     ])
 
-    measured_after = measure_integrated_lufs(output_wav)
+    measured_after: Optional[float] = None
+    stats_after = _parse_loudnorm_json(p2.stderr)
+    if stats_after and "output_i" in stats_after:
+        try:
+            val = float(stats_after["output_i"])
+            if val > -90.0:
+                measured_after = round(val, 2)
+        except (ValueError, TypeError):
+            measured_after = None
+    if measured_after is None:
+        measured_after = measure_integrated_lufs(output_wav)
     return output_wav, measured_after
 
 

@@ -459,7 +459,8 @@
   }
 
   .proj-item {
-    padding: 11px 12px;
+    position: relative;
+    padding: 11px 30px 11px 12px;
     border-radius: 12px;
     border: 1px solid transparent;
     background: rgba(255, 255, 255, 0.02);
@@ -468,6 +469,53 @@
     color: var(--text);
     transition: background 0.15s, border-color 0.15s, transform 0.12s;
   }
+  .proj-del {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+    opacity: 0;
+    padding: 0;
+    transition: opacity 0.15s, background 0.15s, color 0.15s;
+  }
+  .proj-item:hover .proj-del { opacity: 1; }
+  .proj-del:hover { background: rgba(244, 63, 94, 0.22); color: #FDA4AF; }
+  .btn-stop {
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: rgba(244, 63, 94, 0.18);
+    color: #FDA4AF;
+    border: 1px solid rgba(244, 63, 94, 0.5);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .btn-stop:hover { background: rgba(244, 63, 94, 0.34); color: #fff; }
+  .btn-dl {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    margin-top: 10px;
+    padding: 9px 14px;
+    border-radius: 10px;
+    background: rgba(34, 155, 240, 0.16);
+    color: #BAE6FD;
+    border: 1px solid rgba(34, 155, 240, 0.42);
+    font-size: 12.5px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .btn-dl:hover { background: rgba(34, 155, 240, 0.30); border-color: rgba(34, 155, 240, 0.7); }
   .proj-item:hover {
     background: rgba(34, 155, 240, 0.10);
     border-color: rgba(34, 155, 240, 0.25);
@@ -1569,6 +1617,24 @@ async function loadProjectsList() {
   renderSidebar();
 }
 
+function loadPrefs() {
+  try {
+    return Object.assign(
+      { preset: "iman", color: "purple", filter1: "", filter2: "", mirror: false, maxClips: "15" },
+      JSON.parse(localStorage.getItem("shortly_prefs_v1") || "{}")
+    );
+  } catch (_) {
+    return { preset: "iman", color: "purple", filter1: "", filter2: "", mirror: false, maxClips: "15" };
+  }
+}
+
+function savePrefs(partial) {
+  try {
+    const merged = Object.assign(loadPrefs(), partial);
+    localStorage.setItem("shortly_prefs_v1", JSON.stringify(merged));
+  } catch (_) {}
+}
+
 function renderSidebar() {
   const list = document.getElementById("project-list");
   const countPill = document.getElementById("proj-count-pill");
@@ -1582,18 +1648,41 @@ function renderSidebar() {
   list.innerHTML = APP.projects.map(p => {
     const active = APP.view === "project" && APP.currentProjectName === p.name ? "active" : "";
     return `
-      <button class="proj-item ${active}" data-proj="${esc(p.name)}" type="button">
+      <div class="proj-item ${active}" data-proj="${esc(p.name)}" role="button" tabindex="0">
+        <button class="proj-del" data-del="${esc(p.name)}" type="button" title="Delete project">&times;</button>
         <div class="pname">${esc(p.person || p.name)}</div>
         <div class="pmeta">${esc(p.title || p.show_name || p.name)}</div>
         <div class="proj-badges">
           ${p.rendered_count ? `<span class="badge green">${p.rendered_count} Shorts Ready</span>` : `<span class="badge coral">${p.candidate_count} viral picks</span>`}
         </div>
-      </button>
+      </div>
     `;
   }).join("");
 
-  list.querySelectorAll(".proj-item").forEach(btn => {
-    btn.addEventListener("click", () => openProject(btn.dataset.proj));
+  list.querySelectorAll(".proj-item").forEach(item => {
+    item.addEventListener("click", ev => {
+      if (ev.target && ev.target.closest(".proj-del")) return;
+      openProject(item.dataset.proj);
+    });
+  });
+
+  list.querySelectorAll(".proj-del").forEach(btn => {
+    btn.addEventListener("click", async ev => {
+      ev.stopPropagation();
+      const pname = btn.dataset.del;
+      if (!confirm(`Delete project "${pname}" and its rendered Shorts?`)) return;
+      try {
+        await apiPost(`/api/projects/${encodeURIComponent(pname)}/delete`, {});
+        showToast("Project deleted.");
+        if (APP.currentProjectName === pname) {
+          APP.currentProjectName = null;
+          APP.currentProject = null;
+          APP.view = "new";
+        }
+        await loadProjectsList();
+        renderMain();
+      } catch (e) { showToast(e.message); }
+    });
   });
 }
 
@@ -1619,17 +1708,35 @@ async function openProject(name, tabOverride) {
 function renderJobBannerHtml() {
   const j = APP.activeJob;
   if (!j) return "";
-  const cls = j.status === "completed" ? "completed" : (j.status === "error" ? "error" : "");
-  const icon = j.status === "running" ? "&#9889;" : (j.status === "completed" ? "&#9989;" : "&#10060;");
+  const cls = j.status === "completed" ? "completed" : ((j.status === "error" || j.status === "cancelled") ? "error" : "");
+  const icon = j.status === "running" ? "&#9889;" : (j.status === "completed" ? "&#9989;" : "&#9209;");
+  const stopBtn = j.status === "running"
+    ? `<button class="btn-stop" id="btn-stop-job" type="button">${j.cancelling ? "Stopping..." : "Stop"}</button>`
+    : "";
   return `
     <div class="job-banner ${cls}" id="job-banner">
       <div class="job-head">
         <span>${icon} ${esc(j.message)}</span>
-        <span style="color:var(--muted);">${j.elapsed_sec}s</span>
+        <span style="display:inline-flex;align-items:center;gap:10px;">
+          <span style="color:var(--muted);">${j.elapsed_sec}s</span>
+          ${stopBtn}
+        </span>
       </div>
       <div class="job-logs" id="job-logs-box">${esc((j.logs || []).join("\n"))}</div>
     </div>
   `;
+}
+
+function bindJobBannerActions() {
+  const stopBtn = document.getElementById("btn-stop-job");
+  if (stopBtn && APP.activeJob) {
+    stopBtn.addEventListener("click", async () => {
+      try {
+        await apiPost(`/api/jobs/${encodeURIComponent(APP.activeJob.job_id)}/cancel`, {});
+        showToast("Stopping cleanly after current clip...");
+      } catch (e) { showToast(e.message); }
+    });
+  }
 }
 
 function startPollingJob(jobObj) {
@@ -1643,6 +1750,7 @@ function startPollingJob(jobObj) {
       const banner = document.getElementById("job-banner");
       if (banner) {
         banner.outerHTML = renderJobBannerHtml();
+        bindJobBannerActions();
         const lb = document.getElementById("job-logs-box");
         if (lb) lb.scrollTop = lb.scrollHeight;
       } else {
@@ -1652,8 +1760,8 @@ function startPollingJob(jobObj) {
         clearInterval(APP.pollTimer);
         APP.pollTimer = null;
         await loadProjectsList();
-        if (updated.status === "completed" && updated.project_name && updated.project_name !== "auto") {
-          showToast("Your Viral Shorts are ready!");
+        if ((updated.status === "completed" || updated.status === "cancelled") && updated.project_name && updated.project_name !== "auto") {
+          showToast(updated.status === "completed" ? "Your Viral Shorts are ready!" : "Stopped cleanly.");
           await openProject(updated.project_name, "outputs");
         }
       }
@@ -1821,13 +1929,37 @@ function renderNewProjectView() {
   `;
 
   startHeroWordRotation();
+  bindJobBannerActions();
+
+  const prefs = loadPrefs();
+  document.getElementById("f-cap-preset").value = prefs.preset;
+  document.getElementById("f-cap-color").value = prefs.color;
+  document.getElementById("f-max-clips").value = prefs.maxClips;
+  document.getElementById("f-filter-1").value = prefs.filter1;
+  document.getElementById("f-filter-2").value = prefs.filter2;
 
   const mirrorCb = document.getElementById("f-mirror-video");
   const mirrorChip = document.getElementById("f-mirror-chip");
   const mirrorState = document.getElementById("f-mirror-state");
+  mirrorCb.checked = !!prefs.mirror;
+  mirrorChip.classList.toggle("is-on", mirrorCb.checked);
+  mirrorState.textContent = mirrorCb.checked ? "ON" : "OFF";
+
+  const persistHomePrefs = () => savePrefs({
+    preset: document.getElementById("f-cap-preset").value,
+    color: document.getElementById("f-cap-color").value,
+    maxClips: document.getElementById("f-max-clips").value,
+    filter1: document.getElementById("f-filter-1").value,
+    filter2: document.getElementById("f-filter-2").value,
+    mirror: mirrorCb.checked,
+  });
+  ["f-cap-preset", "f-cap-color", "f-max-clips", "f-filter-1", "f-filter-2"].forEach(id => {
+    document.getElementById(id).addEventListener("change", persistHomePrefs);
+  });
   mirrorCb.addEventListener("change", () => {
     mirrorChip.classList.toggle("is-on", mirrorCb.checked);
     mirrorState.textContent = mirrorCb.checked ? "ON" : "OFF";
+    persistHomePrefs();
   });
 
   document.getElementById("btn-browse").addEventListener("click", async () => {
@@ -1976,12 +2108,33 @@ function renderReviewTab(p) {
     <div class="cards-grid" id="rev-cards"></div>
   `;
 
+  bindJobBannerActions();
+  const rPrefs = loadPrefs();
+  document.getElementById("r-cap-preset").value = rPrefs.preset;
+  document.getElementById("r-cap-color").value = rPrefs.color;
+  document.getElementById("r-filter-1").value = rPrefs.filter1;
+  document.getElementById("r-filter-2").value = rPrefs.filter2;
+
   const rMirrorCb = document.getElementById("r-mirror-video");
   const rMirrorChip = document.getElementById("r-mirror-chip");
   const rMirrorState = document.getElementById("r-mirror-state");
+  rMirrorCb.checked = !!rPrefs.mirror;
+  rMirrorChip.classList.toggle("is-on", rMirrorCb.checked);
+  rMirrorState.textContent = rMirrorCb.checked ? "ON" : "OFF";
+  const persistRevPrefs = () => savePrefs({
+    preset: document.getElementById("r-cap-preset").value,
+    color: document.getElementById("r-cap-color").value,
+    filter1: document.getElementById("r-filter-1").value,
+    filter2: document.getElementById("r-filter-2").value,
+    mirror: rMirrorCb.checked,
+  });
+  ["r-cap-preset", "r-cap-color", "r-filter-1", "r-filter-2"].forEach(id => {
+    document.getElementById(id).addEventListener("change", persistRevPrefs);
+  });
   rMirrorCb.addEventListener("change", () => {
     rMirrorChip.classList.toggle("is-on", rMirrorCb.checked);
     rMirrorState.textContent = rMirrorCb.checked ? "ON" : "OFF";
+    persistRevPrefs();
   });
 
   function drawCards() {
@@ -2153,6 +2306,10 @@ function renderOutputsTab(p) {
             <span>Viral Score: <b style="color:#FFD3C4;">${o.score}/100</b></span>
             <span>Loudness: <b style="color:var(--green);">${o.lufs !== null ? o.lufs + " LUFS" : "N/A"}</b></span>
           </div>
+          <a class="btn-dl" href="${esc(o.video_url)}" download="${esc(o.output_video)}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download Short (.mp4)
+          </a>
         </div>
         <div>
           <div style="margin-bottom:14px;">
@@ -2188,14 +2345,37 @@ function renderOutputsTab(p) {
   }
 
   document.getElementById("content").innerHTML = bodyHtml;
+  bindJobBannerActions();
+
+  const prefs = loadPrefs();
+  const oPreset = document.getElementById("o-cap-preset");
+  const oColor = document.getElementById("o-cap-color");
+  const oF1 = document.getElementById("o-filter-1");
+  const oF2 = document.getElementById("o-filter-2");
+  if (oPreset) oPreset.value = prefs.preset;
+  if (oColor) oColor.value = prefs.color;
+  if (oF1) oF1.value = prefs.filter1;
+  if (oF2) oF2.value = prefs.filter2;
 
   const oMirrorCb = document.getElementById("o-mirror-video");
   const oMirrorChip = document.getElementById("o-mirror-chip");
   const oMirrorState = document.getElementById("o-mirror-state");
   if (oMirrorCb) {
+    oMirrorCb.checked = !!prefs.mirror;
+    oMirrorChip.classList.toggle("is-on", oMirrorCb.checked);
+    oMirrorState.textContent = oMirrorCb.checked ? "ON" : "OFF";
+    const persistOutPrefs = () => savePrefs({
+      preset: oPreset.value,
+      color: oColor.value,
+      filter1: oF1.value,
+      filter2: oF2.value,
+      mirror: oMirrorCb.checked,
+    });
+    [oPreset, oColor, oF1, oF2].forEach(el => el && el.addEventListener("change", persistOutPrefs));
     oMirrorCb.addEventListener("change", () => {
       oMirrorChip.classList.toggle("is-on", oMirrorCb.checked);
       oMirrorState.textContent = oMirrorCb.checked ? "ON" : "OFF";
+      persistOutPrefs();
     });
   }
 

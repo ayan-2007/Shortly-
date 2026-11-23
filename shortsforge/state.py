@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -63,7 +65,9 @@ class ProjectWorkspace:
         return ProjectState.model_validate_json(self.state_path.read_text(encoding="utf-8"))
 
     def save_state(self, state: ProjectState) -> None:
-        self.state_path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+        tmp = self.state_path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+        tmp.replace(self.state_path)
 
     def mark_step_complete(self, state: ProjectState, step_name: str) -> None:
         if step_name not in state.completed_steps:
@@ -90,4 +94,6 @@ class ProjectWorkspace:
 
     def set_llm_cache(self, key: str, value: Any) -> None:
         path = self.llm_cache_dir / f"{key}.json"
-        path.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
