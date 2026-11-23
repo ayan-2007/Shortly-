@@ -221,7 +221,7 @@ def evaluate_candidate_quality(
         cap = cv2.VideoCapture(str(video_path))
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         clip_dur = max(1.0, candidate.end - candidate.start)
-        sample_step_sec = max(1.0 / max(0.2, config.quality_check.sample_fps), clip_dur / 6.0)
+        sample_step_sec = max(1.0 / max(0.2, config.quality_check.sample_fps), clip_dur / 4.0)
 
         t = candidate.start
         while t <= candidate.end:
@@ -239,9 +239,11 @@ def evaluate_candidate_quality(
             elif is_mostly_graphic_frame(frame):
                 graphic_frames += 1
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            fh, fw = frame.shape[:2]
+            small = cv2.resize(frame, (320, max(1, int(320 * fh / max(1, fw)))), interpolation=cv2.INTER_AREA) if fw > 320 else frame
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
             sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-            face_bonus = sum(f.area for f in faces) / max(1.0, frame.shape[0] * frame.shape[1]) * 1200.0
+            face_bonus = sum(f.area for f in faces) / max(1.0, fh * fw) * 1200.0
             peak_bonus = 120.0 if (candidate.peak_start <= t <= candidate.peak_end) else 0.0
             thumb_score = sharpness + face_bonus + peak_bonus
             if thumb_score > best_thumb_score:
