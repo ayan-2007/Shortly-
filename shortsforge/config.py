@@ -19,9 +19,10 @@ class PathsConfig(BaseModel):
 
 
 class IngestConfig(BaseModel):
-    max_video_height: int = 1080
-    prefer_h264: bool = True
-    concurrent_fragments: int = 4
+    max_video_height: int = 2160
+    min_preferred_height: int = 1080
+    prefer_h264: bool = False
+    concurrent_fragments: int = 6
     retries: int = 10
     cookies_from_browser: str = ""
 
@@ -60,9 +61,11 @@ class ScoringWeightsConfig(BaseModel):
 
 
 class MomentsConfig(BaseModel):
-    max_candidates: int = 10
-    min_duration_sec: float = 20.0
-    max_duration_sec: float = 55.0
+    min_candidates: int = 1
+    max_candidates: int = Field(default=15, ge=1, le=15)  # Strictly capped at 15 max videos per run
+    min_viral_score: int = Field(default=78, ge=0, le=100)
+    min_duration_sec: float = 15.0
+    max_duration_sec: float = 120.0
     window_minutes: int = 18
     window_overlap_minutes: int = 2
     scoring_weights: ScoringWeightsConfig = Field(default_factory=ScoringWeightsConfig)
@@ -79,14 +82,15 @@ class QualityCheckConfig(BaseModel):
 
 
 class HookConfig(BaseModel):
+    enabled: bool = True
     style: Literal["cold_open", "freeze_narrator"] = "cold_open"
     variants_count: int = 5
     max_words: int = 9
-    cold_open_min_sec: float = 2.0
-    cold_open_max_sec: float = 3.0
+    cold_open_min_sec: float = 2.4
+    cold_open_max_sec: float = 3.8
     freeze_duration_sec: float = 2.8
     freeze_zoom_end: float = 1.12
-    transition_duration_sec: float = 0.28
+    transition_duration_sec: float = 0.0
     max_verification_attempts: int = 3
     deceased_subject: bool = False
 
@@ -95,6 +99,7 @@ class ReframeConfig(BaseModel):
     output_width: int = 1080
     output_height: int = 1920
     output_fps: int = 30
+    preserve_source_fps: bool = True
     face_smoothing_alpha: float = 0.12
     deadzone_ratio: float = 0.05
     max_pan_speed_px_per_sec: float = 380.0
@@ -105,11 +110,11 @@ class ReframeConfig(BaseModel):
 
 
 class CaptionsConfig(BaseModel):
-    preset: Literal["neon", "comic", "minimal"] = "neon"
+    preset: Literal["iman", "hormozi", "documentary", "neon", "comic", "minimal"] = "iman"
     words_per_group: int = Field(default=3, ge=1, le=3)
     font_name: str = ""
     font_size: int = 94
-    emphasis_scale: float = 1.28
+    emphasis_scale: float = 1.26
     active_color: Literal["yellow", "red"] = "yellow"
     safe_margin_left: int = 80
     safe_margin_right: int = 160
@@ -127,22 +132,29 @@ class AudioConfig(BaseModel):
     target_lufs: float = -14.0
     true_peak_db: float = -1.5
     lra: float = 11.0
-    hook_bed_enabled: bool = True
+    bg_music_enabled: bool = False
+    bg_music_volume_db: float = -21.0
+    hook_bed_enabled: bool = False
     hook_bed_path: str = ""
-    hook_bed_volume_db: float = -22.0
+    hook_bed_volume_db: float = -15.5
+    transition_sfx_enabled: bool = False
     transition_sfx_path: str = ""
-    transition_sfx_volume_db: float = -10.0
+    transition_sfx_volume_db: float = -9.0
 
 
 class ReviewConfig(BaseModel):
-    auto_score_threshold: int = 75
+    auto_score_threshold: int = 78
     server_port: int = 8765
 
 
 class ExportConfig(BaseModel):
-    video_crf: int = 20
-    video_preset: str = "medium"
-    audio_bitrate: str = "192k"
+    video_crf: int = 16
+    video_preset: str = "fast"
+    sharpen_strength: float = 0.22
+    mirror_video: bool = False
+    video_filters: List[str] = Field(default_factory=list)
+    lossless_intermediates: bool = True
+    audio_bitrate: str = "256k"
     rights_note: str = (
         "Verify licensing/fair-use permissions for original broadcast footage before publishing."
     )

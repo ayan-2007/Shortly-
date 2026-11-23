@@ -8,9 +8,10 @@ paths:
   fonts_dir: "" # Optional custom directory of .ttf/.otf fonts; auto-discovers OS fonts if blank
 
 ingest:
-  max_video_height: 1080 # Caps downloads at 1080p (fast downloads, crisp 9:16 output, avoids huge 4K AV1 files)
-  prefer_h264: true # Strongly prefer H.264/MP4 for fast OpenCV face-tracking & ffmpeg slicing
-  concurrent_fragments: 4
+  max_video_height: 2160 # Downloads up to 4K/1440p/1080p HD so 9:16 portrait crops preserve crisp original resolution
+  min_preferred_height: 1080
+  prefer_h264: false
+  concurrent_fragments: 6
   retries: 10
   cookies_from_browser: "" # Optional: "chrome" | "edge" | "firefox" for age-restricted videos
 
@@ -38,9 +39,11 @@ transcription:
   speaker_turn_pause_sec: 1.6
 
 moments:
-  max_candidates: 10
-  min_duration_sec: 20.0
-  max_duration_sec: 55.0
+  min_candidates: 1
+  max_candidates: 15 # Hard cap: maximum 15 clips generated at once (quality over quantity)
+  min_viral_score: 78 # Only keep genuine high-retention viral moments (filters out filler/random clips)
+  min_duration_sec: 15.0
+  max_duration_sec: 120.0 # Context-aware completion so messages never cut off mid-thought
   window_minutes: 18
   window_overlap_minutes: 2
   scoring_weights:
@@ -60,14 +63,15 @@ quality_check:
   min_estimated_snr_db: 6.0
 
 hook:
+  enabled: true
   style: "cold_open" # "cold_open" | "freeze_narrator"
   variants_count: 5
   max_words: 9
-  cold_open_min_sec: 2.0
-  cold_open_max_sec: 3.0
+  cold_open_min_sec: 2.4
+  cold_open_max_sec: 3.8
   freeze_duration_sec: 2.8
   freeze_zoom_end: 1.12
-  transition_duration_sec: 0.28
+  transition_duration_sec: 0.0
   max_verification_attempts: 3
   deceased_subject: false # Enables extra respectful-tone guardrails for deceased figures
 
@@ -75,6 +79,7 @@ reframe:
   output_width: 1080
   output_height: 1920
   output_fps: 30
+  preserve_source_fps: true
   face_smoothing_alpha: 0.12 # Lower = smoother camera movement
   deadzone_ratio: 0.05
   max_pan_speed_px_per_sec: 380.0
@@ -84,11 +89,11 @@ reframe:
   enhance_old_footage: false # Light ffmpeg denoise + lanczos upscale + subtle sharpen (no AI face alteration)
 
 captions:
-  preset: "neon" # "neon" | "comic" | "minimal"
+  preset: "iman" # "iman" | "hormozi" | "documentary" | "neon" | "comic" | "minimal"
   words_per_group: 3 # 1-3 words per caption event
-  font_name: "" # Leave blank to auto-select ultra-bold display font (Arial Black / Montserrat Black / Impact)
+  font_name: "" # Leave blank to auto-select ultra-bold display font (Montserrat Black / Arial Black / Impact)
   font_size: 94
-  emphasis_scale: 1.28
+  emphasis_scale: 1.26
   active_color: "yellow" # "yellow" | "red"
   safe_margin_left: 80
   safe_margin_right: 160
@@ -104,18 +109,25 @@ audio:
   target_lufs: -14.0
   true_peak_db: -1.5
   lra: 11.0
-  hook_bed_enabled: true
-  hook_bed_path: "" # Optional custom audio file; uses clean synthesized ambient bed if blank
-  hook_bed_volume_db: -22.0
-  transition_sfx_path: "" # Optional custom whoosh/rewind SFX; uses clean synthesized SFX if blank
-  transition_sfx_volume_db: -10.0
+  bg_music_enabled: false
+  bg_music_volume_db: -21.0
+  hook_bed_enabled: false
+  hook_bed_path: ""
+  hook_bed_volume_db: -15.5
+  transition_sfx_enabled: false
+  transition_sfx_path: ""
+  transition_sfx_volume_db: -9.0
 
 review:
-  auto_score_threshold: 75
+  auto_score_threshold: 78
   server_port: 8765
 
 export:
-  video_crf: 20
-  video_preset: "medium"
-  audio_bitrate: "192k"
+  video_crf: 16
+  video_preset: "fast"
+  sharpen_strength: 0.22
+  mirror_video: false # Horizontally mirror video footage (before burning captions so text remains readable)
+  video_filters: [] # Up to 2 quality filters: "cinematic_grade" | "sharp_hd" | "denoise_clean" | "warm_studio"
+  lossless_intermediates: true
+  audio_bitrate: "256k"
   rights_note: "Verify licensing/fair-use permissions for original broadcast footage before publishing."

@@ -120,21 +120,23 @@ def extract_show_and_air_date(title: str, description: str, upload_date: str = "
 
 def auto_detect_person_from_title(title: str, channel: str = "", description: str = "") -> str:
     """Automatically extract the speaker/guest's full name from a video title or channel."""
-    clean_title = re.sub(r"^\s*[\(\[🐣🔥🚨]*[A-Z! ]+[\)\]]*\s*", "", title).strip()
+    # Only strip explicit bracketed/emoji intro badges like "[SHOCKING] " or "🔥 EXCLUSIVE: ", never a name's first capital letter!
+    clean_title = re.sub(r"^\s*(?:[\(\[][^\)\]]{1,25}[\)\]]|[🔥🚨🎙️❗]+)\s*", "", title).strip()
 
+    name_tok = r"[A-Z](?:[a-z]+|'[A-Z][a-z]+)(?:-[A-Z][a-z]+)?"
     patterns = [
-        r"\bwith\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b",
-        r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})(?:'s|\s+Speaks|\s+Opens|\s+Explains|\s+Reveals|\s+Breaks|\s+Interview|\s+on\s+)",
-        r"Interview\s+With\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b",
+        rf"\bwith\s+({name_tok}(?:\s+{name_tok}){{1,2}})\b",
+        rf"^({name_tok}(?:\s+{name_tok}){{1,2}})(?:'s|[:\-]|\s+(?:Speaks|Opens|Explains|Reveals|Breaks|Interview|Every|How|Why|On)\b)",
+        rf"Interview\s+With\s+({name_tok}(?:\s+{name_tok}){{1,2}})\b",
     ]
     for pat in patterns:
         m = re.search(pat, clean_title)
         if m:
             name = m.group(1).strip()
-            if name.lower() not in {"the matrix", "late night", "full interview", "emergency interview"}:
+            if name.lower() not in {"the matrix", "late night", "full interview", "emergency interview", "every time", "the man", "the woman", "this man", "this woman"}:
                 return name
 
-    for pat in patterns:
+    for pat in patterns[:1] + patterns[2:]:
         m = re.search(pat, description[:500])
         if m:
             return m.group(1).strip()
@@ -231,19 +233,25 @@ def _detect_js_runtimes() -> Dict[str, Dict[str, str]]:
 
 
 def _build_format_selector(config: AppConfig, duration_sec: float = 0.0) -> str:
-    """Build a fast H.264 format selector (uses 720p H.264 on very long >30m videos for 3x faster download)."""
-    h = max(360, int(config.ingest.max_video_height))
-    if duration_sec > 1800 and h > 720:
-        h = 720
+    """Build an original-quality-preserving format selector (4K/1440p on normal videos, 1440p/1080p minimum on long podcasts)."""
+    h = max(1080, int(config.ingest.max_video_height))
+    if duration_sec > 2700 and h > 1440:
+        h = 1440
+    min_h = max(720, int(getattr(config.ingest, "min_preferred_height", 1080)))
     if config.ingest.prefer_h264:
         return (
+            f"bestvideo[height<={h}][height>={min_h}][vcodec^=avc1]+bestaudio[ext=m4a]/"
+            f"bestvideo[height<={h}][height>={min_h}][vcodec!^=av01]+bestaudio/"
             f"bestvideo[height<={h}][vcodec^=avc1]+bestaudio[ext=m4a]/"
-            f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/"
+            f"bestvideo[height<={h}][vcodec!^=av01]+bestaudio/"
             f"bestvideo[height<={h}]+bestaudio/"
             f"best[height<={h}]/best"
         )
+    # Prioritize maximum crispness (2160p/1440p/1080p VP9 or H.264, avoiding slow AV1 software decode)
     return (
-        f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/"
+        f"bestvideo[height<={h}][height>={min_h}][vcodec!^=av01]+bestaudio[ext=m4a]/"
+        f"bestvideo[height<={h}][height>={min_h}][vcodec!^=av01]+bestaudio/"
+        f"bestvideo[height<={h}][vcodec!^=av01]+bestaudio/"
         f"bestvideo[height<={h}]+bestaudio/"
         f"best[height<={h}]/best"
     )
@@ -326,7 +334,8 @@ def ingest_source(
         same_src = existing.source == source or (
             is_url(source) and extract_youtube_id(existing.source) == extract_youtube_id(source) and extract_youtube_id(source) != ""
         )
-        if same_src and Path(existing.local_video_path).exists() and Path(existing.local_audio_path).exists():
+        need_hd_upgrade = force and is_url(source) and existing.height > 0 and existing.height < 900 and config.ingest.max_video_height >= 1080
+        if same_src and not need_hd_upgrade and Path(existing.local_video_path).exists() and Path(existing.local_audio_path).exists():
             if on_progress:
                 on_progress("Loaded cached source video & audio.")
             # Enrich with YouTube word-level captions + Most Replayed heatmap if not yet cached
@@ -361,6 +370,10 @@ def ingest_source(
                 except Exception:  # noqa: BLE001
                     pass
             return existing
+        if need_hd_upgrade and Path(existing.local_video_path).exists():
+            if on_progress:
+                on_progress(f"Upgrading previously {existing.height}p source video to HD ({config.ingest.max_video_height}p max)...")
+            Path(existing.local_video_path).unlink(missing_ok=True)
 
     if is_url(source):
         meta = _ingest_url(source, workspace, config, on_progress=on_progress)

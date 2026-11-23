@@ -133,6 +133,7 @@ class ClipCandidate(BaseModel):
     transcript_text: str
     peak_start: float
     peak_end: float
+    mood: str = "tense"
     quality: Optional[QualityReport] = None
     hooks: Optional[HookSet] = None
     thumbnail_path: Optional[str] = None
@@ -166,10 +167,12 @@ class ClipExportMetadata(BaseModel):
     output_video: str
     thumbnail: str
     titles: List[str]
+    post_caption: str = ""
     description: str
     hashtags: List[str]
     pinned_comment: str
     hook_text: str
+    mood: str = "tense"
     start: float
     end: float
     score: int

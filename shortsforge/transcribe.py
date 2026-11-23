@@ -84,7 +84,7 @@ def group_words_into_sentences(
         is_terminal = bool(re.search(r"[.!?][\"'\)\]]*$", token))
         next_gap = (words[i + 1].start - w.end) if i + 1 < len(words) else 0.0
 
-        if is_terminal or (next_gap >= 0.95 and len(buf) >= 5) or len(buf) >= 24:
+        if is_terminal or (next_gap >= 1.45 and len(buf) >= 6) or len(buf) >= 38:
             sent, centroid = _flush(buf, speaker_idx)
             sentences.append(sent)
             if prev_centroid == 0.0 and centroid > 0.0:
@@ -145,7 +145,7 @@ def parse_yt_json3_captions(json3_path: Path, speaker_pause_sec: float = 1.6) ->
                 if en > next_st and next_st > st + 0.04:
                     en = next_st
                 gap = next_st - en
-                if gap >= 0.85 and not re.search(r"[.!?,;:]$", tok):
+                if gap >= 1.35 and not re.search(r"[.!?,;:]$", tok):
                     tok = tok + "."
             all_words.append(
                 WordTimestamp(
