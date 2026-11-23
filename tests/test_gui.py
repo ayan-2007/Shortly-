@@ -89,11 +89,19 @@ def test_gui_server_endpoints_and_range_streaming(tmp_path: Path) -> None:
     base = f"http://127.0.0.1:{port}"
 
     try:
-        # 1. Root HTML serves Studio UI
+        # 1. Root HTML serves Shortly Studio UI + static logo assets
         with urllib.request.urlopen(f"{base}/") as resp:
             html_body = resp.read().decode("utf-8")
             assert resp.status == 200
-            assert "ShortsForge Studio" in html_body
+            assert "Shortly Studio" in html_body
+            assert "pulse-bg-canvas" in html_body
+            assert "shiny-cta" in html_body
+            assert "/static/shortly-logo.png" in html_body
+
+        for asset in ("/static/shortly-logo.png", "/static/shortly-icon.png", "/static/shortly-pulse.png", "/favicon.ico"):
+            with urllib.request.urlopen(f"{base}{asset}") as resp:
+                assert resp.status == 200
+                assert len(resp.read()) > 100
 
         # 2. List projects
         with urllib.request.urlopen(f"{base}/api/projects") as resp:

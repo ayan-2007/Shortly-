@@ -1,4 +1,4 @@
-"""Local web Studio GUI server for ShortsForge with 1-Click Link Autopilot."""
+"""Local web Studio GUI server for Shortly with 1-Click Link Autopilot."""
 
 from __future__ import annotations
 
@@ -389,8 +389,26 @@ def create_gui_server(
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(content)))
+                self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(content)
+                return
+
+            if path == "/favicon.ico":
+                icon_path = STATIC_DIR / "shortly-pulse.png"
+                if icon_path.is_file():
+                    self._serve_file_with_range(icon_path)
+                    return
+                self.send_error(404)
+                return
+
+            if path.startswith("/static/"):
+                rel = path.split("/static/", 1)[1].lstrip("/")
+                target = _safe_resolve_under(STATIC_DIR, rel)
+                if target is None or not target.is_file():
+                    self.send_error(404, "Static asset not found")
+                    return
+                self._serve_file_with_range(target)
                 return
 
             if path == "/api/projects":
@@ -481,12 +499,14 @@ def create_gui_server(
                 cfg = self._cfg()
                 if body.get("caption_preset") in ("iman", "hormozi", "documentary", "neon", "comic", "minimal"):
                     cfg.captions.preset = body["caption_preset"]
-                if body.get("active_color") in ("yellow", "red"):
+                if body.get("active_color") in ("purple", "yellow", "red"):
                     cfg.captions.active_color = body["active_color"]
                 if body.get("hook_style") in ("cold_open", "freeze_narrator"):
                     cfg.hook.style = body["hook_style"]
                 if "hook_enabled" in body:
                     cfg.hook.enabled = bool(body["hook_enabled"])
+                if "show_opening_title" in body:
+                    cfg.hook.show_opening_title = bool(body["show_opening_title"])
                 if "mirror_video" in body:
                     cfg.export.mirror_video = bool(body["mirror_video"])
                 if isinstance(body.get("video_filters"), list):
@@ -538,7 +558,7 @@ def create_gui_server(
                 cfg = self._cfg()
                 if body.get("caption_preset") in ("iman", "hormozi", "documentary", "neon", "comic", "minimal"):
                     cfg.captions.preset = body["caption_preset"]
-                if body.get("active_color") in ("yellow", "red"):
+                if body.get("active_color") in ("purple", "yellow", "red"):
                     cfg.captions.active_color = body["active_color"]
                 if body.get("hook_style") in ("cold_open", "freeze_narrator"):
                     cfg.hook.style = body["hook_style"]
@@ -588,9 +608,13 @@ def create_gui_server(
                 cfg = self._cfg()
                 if body.get("hook_style") in ("cold_open", "freeze_narrator"):
                     cfg.hook.style = body["hook_style"]
+                if "hook_enabled" in body:
+                    cfg.hook.enabled = bool(body["hook_enabled"])
+                if "show_opening_title" in body:
+                    cfg.hook.show_opening_title = bool(body["show_opening_title"])
                 if body.get("caption_preset") in ("iman", "hormozi", "documentary", "neon", "comic", "minimal"):
                     cfg.captions.preset = body["caption_preset"]
-                if body.get("active_color") in ("yellow", "red"):
+                if body.get("active_color") in ("purple", "yellow", "red"):
                     cfg.captions.active_color = body["active_color"]
                 if "archive_tag" in body:
                     cfg.overlays.archive_tag = bool(body["archive_tag"])
@@ -670,7 +694,7 @@ def launch_gui(
     port: int = 8780,
     open_browser: bool = True,
 ) -> None:
-    """Start the local ShortsForge Studio GUI server (or open the browser if already running)."""
+    """Start the local Shortly Studio GUI server (or open the browser if already running)."""
     import urllib.request
 
     url = f"http://{host}:{port}/"
@@ -678,7 +702,7 @@ def launch_gui(
     try:
         with urllib.request.urlopen(f"http://{host}:{port}/api/config", timeout=0.8) as resp:
             if resp.status == 200:
-                print(f"ShortsForge Studio is already running at {url}")
+                print(f"Shortly Studio is already running at {url}")
                 if open_browser:
                     webbrowser.open(url)
                 return
@@ -686,12 +710,12 @@ def launch_gui(
         pass
 
     server = create_gui_server(config_path=config_path, host=host, port=port)
-    print(f"ShortsForge Studio GUI running at {url}  (press Ctrl+C to stop)")
+    print(f"Shortly Studio GUI running at {url}  (press Ctrl+C to stop)")
     if open_browser:
         threading.Timer(0.45, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nShutting down ShortsForge Studio GUI.")
+        print("\nShutting down Shortly Studio GUI.")
     finally:
         server.server_close()
