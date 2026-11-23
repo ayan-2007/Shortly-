@@ -256,21 +256,40 @@ def save_auto_decisions(
     candidates: List[ClipCandidate],
     workspace: ProjectWorkspace,
     threshold: int,
+    max_approved: int = 12,
 ) -> ReviewDecisionsFile:
-    """Auto-approve non-rejected candidates meeting the score threshold (always approving at least the #1 clip)."""
+    """Auto-approve non-rejected candidates meeting threshold, keeping clip counts in a balanced 6-12 sweet spot."""
     decisions: Dict[str, ReviewDecision] = {}
-    any_approved = False
+    cap = 12 if max_approved <= 0 else max(1, min(15, max_approved))
+
+    # Rank quality-passed candidates by score descending to enforce the upper ceiling
+    passed_sorted = sorted(
+        [c for c in candidates if not c.rejected_by_quality],
+        key=lambda c: c.score,
+        reverse=True,
+    )
+    approved_ids = {c.id for c in passed_sorted if c.score >= threshold}
+    if len(approved_ids) > cap:
+        approved_ids = {c.id for c in passed_sorted[:cap]}
+
+    # Adaptive sweet-spot floor: if a high threshold on a multi-clip podcast approved <=3 clips,
+    # include the top quality-passed viral picks (score >= 72) up to a balanced 6-8 clip batch.
+    min_floor = min(8, max(5, cap // 2))
+    if len(approved_ids) < min_floor and len(passed_sorted) >= 4:
+        for c in passed_sorted:
+            if len(approved_ids) >= min_floor:
+                break
+            if c.score >= 72:
+                approved_ids.add(c.id)
+
     for c in candidates:
-        approved = (not c.rejected_by_quality) and (c.score >= threshold)
-        if approved:
-            any_approved = True
         decisions[c.id] = ReviewDecision(
             clip_id=c.id,
-            approved=approved,
+            approved=(c.id in approved_ids),
             selected_hook_index=c.hooks.selected_index if c.hooks else 0,
             edited_hook_text=c.hooks.active_hook_text() if c.hooks else None,
         )
-    if not any_approved and candidates:
+    if not approved_ids and candidates:
         top = max(candidates, key=lambda x: x.score)
         decisions[top.id].approved = True
 

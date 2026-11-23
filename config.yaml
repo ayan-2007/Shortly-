@@ -39,9 +39,9 @@ transcription:
   speaker_turn_pause_sec: 1.6
 
 moments:
-  min_candidates: 1
-  max_candidates: 15 # Hard cap: maximum 15 clips generated at once (quality over quantity)
-  min_viral_score: 78 # Only keep genuine high-retention viral moments (filters out filler/random clips)
+  min_candidates: 6 # Adaptive sweet-spot floor for full podcasts (scales down automatically for short clips)
+  max_candidates: 12 # Balanced sweet spot: up to 12 viral clips per podcast (hard cap 15)
+  min_viral_score: 76 # Balanced viral threshold (adaptively adjusts so podcasts never drop to 3 clips or explode to 40)
   min_duration_sec: 15.0
   max_duration_sec: 120.0 # Context-aware completion so messages never cut off mid-thought
   window_minutes: 18
@@ -81,9 +81,10 @@ reframe:
   output_height: 1920
   output_fps: 30
   preserve_source_fps: true
-  face_smoothing_alpha: 0.12 # Lower = smoother camera movement
-  deadzone_ratio: 0.05
-  max_pan_speed_px_per_sec: 380.0
+  face_tracking_enabled: true # Neural YuNet + active-speaker face tracking with instant scene-cut snapping
+  face_smoothing_alpha: 0.18 # Responsive smooth camera tracking within shots
+  deadzone_ratio: 0.03 # Tight deadzone so natural speaker movement is tracked fluidly
+  max_pan_speed_px_per_sec: 460.0
   two_person_layout: "split" # "split" | "blurred_fit"
   four_by_three_zoom: 1.06 # 1.0 = no zoom, >1.0 = subtle gentle zoom on centered 4:3 frame
   scene_threshold: 27.0
@@ -96,6 +97,8 @@ captions:
   font_size: 94
   emphasis_scale: 1.26
   active_color: "purple" # "purple" | "yellow" | "red"
+  position: "bottom" # "bottom" | "lower_mid" | "center" | "upper_mid" | "top"
+  custom_y: null # Optional exact vertical Y pixel position on 1080x1920 canvas
   safe_margin_left: 80
   safe_margin_right: 160
   safe_margin_bottom: 360
@@ -105,6 +108,11 @@ overlays:
   archive_tag: false # "FROM THE ARCHIVE" badge style option
   closing_card_text: "Follow for more"
   closing_card_duration_sec: 0.85 # Must remain < 1.0s
+  attention_card_enabled: false # Post-render white box in the center with attention-grabbing text
+  attention_card_text: ""
+  attention_card_position: "center" # "center" | "upper" | "lower"
+  attention_card_duration_sec: 4.0 # 0.0 = full clip duration, >0 = first N seconds
+  attention_card_style: "white_box" # "white_box" | "white_pill" | "dark_neon"
 
 audio:
   target_lufs: -14.0

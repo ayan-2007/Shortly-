@@ -617,32 +617,52 @@ def find_best_moments(
     llm: LLMClient,
     config: AppConfig,
 ) -> List[ClipCandidate]:
-    """Discover up to 15 max high-impact, complete-thought viral moments (strictly quality over quantity)."""
+    """Discover a balanced sweet spot (typically 8-12 on a podcast, max 15) of complete-thought viral moments."""
     if not transcript.sentences:
         return []
 
     raw_candidates: List[ClipCandidate] = []
+    fallback_candidates: List[ClipCandidate] = []
     has_punct = _transcript_has_punctuation(transcript.sentences)
-    max_cap = 15 if config.moments.max_candidates <= 0 else max(1, min(15, config.moments.max_candidates))
-    min_viral_score = int(getattr(config.moments, "min_viral_score", 78))
+    if config.moments.max_candidates <= 0:
+        max_cap = max(12, min(15, int(getattr(config.moments, "min_candidates", 12) or 12)))
+    else:
+        max_cap = max(1, min(15, config.moments.max_candidates))
+    min_viral_score = int(getattr(config.moments, "min_viral_score", 76))
 
-    # 1. Evaluate YouTube 'Most Replayed' viewer heatmap peaks through strict viral content quality check
+    total_dur = max(
+        float(metadata.duration or 0.0),
+        float(transcript.sentences[-1].end - transcript.sentences[0].start),
+    )
+    cfg_min = max(1, int(getattr(config.moments, "min_candidates", 6) or 6))
+    if total_dur >= 1200.0:
+        target_min = min(max_cap, max(7, cfg_min))
+    elif total_dur >= 480.0:
+        target_min = min(max_cap, max(4, min(7, cfg_min)))
+    elif total_dur >= 120.0:
+        target_min = min(max_cap, 3)
+    else:
+        target_min = 1
+
+    # 1. Evaluate YouTube 'Most Replayed' viewer heatmap peaks (using relative peak scaling for the video)
     if metadata.heatmap:
         sorted_peaks = sorted(
-            [h for h in metadata.heatmap if float(h.get("start_time", 0.0)) >= 12.0],
+            [h for h in metadata.heatmap if float(h.get("start_time", 0.0)) >= 10.0],
             key=lambda h: float(h.get("value", 0.0)),
             reverse=True,
         )
+        max_h_val = max((float(h.get("value", 0.0)) for h in sorted_peaks), default=1.0)
+        min_h_cutoff = max(0.08, min(0.25, max_h_val * 0.32))
         peak_pool = sorted_peaks[: max_cap * 2]
         for peak in peak_pool:
             h_start = float(peak.get("start_time", 0.0))
             h_end = float(peak.get("end_time", h_start + 35.0))
             h_val = float(peak.get("value", 0.0))
-            if h_val < 0.28:
+            if h_val < min_h_cutoff:
                 continue
 
             target_s = max(0.0, h_start - 8.0)
-            target_e = h_end + 12.0
+            target_e = min(target_s + 75.0, h_end + 12.0)
 
             snapped = snap_to_complete_message(
                 transcript.sentences,
@@ -657,12 +677,10 @@ def find_best_moments(
             clip_text = " ".join(re.sub(r"^>>\s*", "", s.text).strip() for s in selected_sents).strip()
 
             viable, content_bd = evaluate_viral_potential(selected_sents, clip_text, has_punctuation=has_punct)
-            if not viable:
-                continue
-
             best_sent = _pick_crux_sentence(selected_sents, has_punctuation=has_punct)
             base_score = compute_weighted_score(content_bd, config)
-            score = min(98, base_score + int(round(h_val * 6)))
+            rel_h = min(1.0, h_val / max(0.1, max_h_val))
+            score = min(98, base_score + int(round(rel_h * 7)))
             p_start, p_end = _snap_peak_to_words(
                 transcript.words,
                 s_start,
@@ -674,27 +692,29 @@ def find_best_moments(
             )
             mood = detect_clip_mood(clip_text, content_bd, metadata.title)
             clean_quote = re.sub(r"^>>\s*", "", best_sent.text.strip()).strip()
-            raw_candidates.append(
-                ClipCandidate(
-                    id="clip_tmp",
-                    start=s_start,
-                    end=s_end,
-                    score=score,
-                    score_breakdown=content_bd,
-                    reason=f"High-retention viral story & audience replay peak ({int(round(h_val * 100))}% replay intensity).",
-                    key_quote=clean_quote,
-                    transcript_text=clip_text,
-                    peak_start=p_start,
-                    peak_end=p_end,
-                    mood=mood,
-                )
+            cand_obj = ClipCandidate(
+                id="clip_tmp",
+                start=s_start,
+                end=s_end,
+                score=max(74, score) if viable else max(70, score),
+                score_breakdown=content_bd,
+                reason=f"High-retention viral story & audience replay peak ({int(round(rel_h * 100))}% replay intensity).",
+                key_quote=clean_quote,
+                transcript_text=clip_text,
+                peak_start=p_start,
+                peak_end=p_end,
+                mood=mood,
             )
+            if viable:
+                raw_candidates.append(cand_obj)
+            elif not _SPONSOR_CLIP_RE.search(clip_text) and len(clip_text.split()) >= 22:
+                fallback_candidates.append(cand_obj)
 
     # 2. Full-timeline scan across overlapping windows for standalone viral stories/insights
     win_sec = config.moments.window_minutes * 60.0
     ov_sec = config.moments.window_overlap_minutes * 60.0
     windows = _chunk_sentences_by_window(transcript.sentences, win_sec, ov_sec)
-    per_window_n = max(3, min(max_cap, int(round(max_cap * 1.5 / max(1, len(windows))))))
+    per_window_n = max(4, min(max_cap, int(round(max_cap * 2.0 / max(1, len(windows))))))
 
     for w_idx, chunk in enumerate(windows):
         lines = [
@@ -735,7 +755,7 @@ def find_best_moments(
             clip_text = " ".join(re.sub(r"^>>\s*", "", s.text).strip() for s in selected_sents).strip()
 
             viable, content_bd = evaluate_viral_potential(selected_sents, clip_text, has_punctuation=has_punct)
-            if not viable:
+            if not viable and (_SPONSOR_CLIP_RE.search(clip_text) or len(clip_text.split()) < 22):
                 continue
 
             bd_raw = item.get("score_breakdown") or {}
@@ -783,34 +803,53 @@ def find_best_moments(
                 key_quote = re.sub(r"^>>\s*", "", best_sent.text.strip()).strip()
 
             mood = detect_clip_mood(clip_text, breakdown, metadata.title)
-            raw_candidates.append(
-                ClipCandidate(
-                    id="clip_tmp",
-                    start=s_start,
-                    end=s_end,
-                    score=score,
-                    score_breakdown=breakdown,
-                    reason=str(item.get("reason") or "Complete high-impact viral insight with clear payoff.").strip(),
-                    key_quote=key_quote,
-                    transcript_text=clip_text,
-                    peak_start=p_start,
-                    peak_end=p_end,
-                    mood=mood,
-                )
+            cand_obj = ClipCandidate(
+                id="clip_tmp",
+                start=s_start,
+                end=s_end,
+                score=score,
+                score_breakdown=breakdown,
+                reason=str(item.get("reason") or "Complete high-impact viral insight with clear payoff.").strip(),
+                key_quote=key_quote,
+                transcript_text=clip_text,
+                peak_start=p_start,
+                peak_end=p_end,
+                mood=mood,
             )
+            if viable:
+                raw_candidates.append(cand_obj)
+            else:
+                fallback_candidates.append(cand_obj)
 
     raw_candidates.sort(key=lambda c: c.score, reverse=True)
+    fallback_candidates.sort(key=lambda c: c.score, reverse=True)
+
     deduped: List[ClipCandidate] = []
+    deferred: List[ClipCandidate] = []
     for cand in raw_candidates:
         if any(_overlap_ratio(cand.start, cand.end, kept.start, kept.end) > 0.25 for kept in deduped):
             continue
-        # Quality over quantity: only include clips meeting min_viral_score (with a graceful >=72 floor for top picks on calmer technical interviews)
-        if cand.score < min_viral_score and (len(deduped) >= 5 or cand.score < 72):
-            if len(deduped) >= 1:
+        if cand.score >= min_viral_score:
+            cand.id = f"clip_{len(deduped) + 1:02d}"
+            deduped.append(cand)
+            if len(deduped) >= max_cap:
+                break
+        else:
+            deferred.append(cand)
+
+    # Adaptive sweet-spot balancing: if a high threshold left fewer than target_min clips, fill from best deferred/fallback
+    if len(deduped) < target_min:
+        for cand in deferred + fallback_candidates:
+            if len(deduped) >= target_min or len(deduped) >= max_cap:
+                break
+            if any(_overlap_ratio(cand.start, cand.end, kept.start, kept.end) > 0.25 for kept in deduped):
                 continue
-        cand.id = f"clip_{len(deduped) + 1:02d}"
-        deduped.append(cand)
-        if len(deduped) >= max_cap:
-            break
+            cand.score = max(72, cand.score)
+            cand.id = f"clip_{len(deduped) + 1:02d}"
+            deduped.append(cand)
+
+    deduped.sort(key=lambda c: c.score, reverse=True)
+    for idx, cand in enumerate(deduped, start=1):
+        cand.id = f"clip_{idx:02d}"
 
     return deduped

@@ -61,9 +61,9 @@ class ScoringWeightsConfig(BaseModel):
 
 
 class MomentsConfig(BaseModel):
-    min_candidates: int = 1
-    max_candidates: int = Field(default=15, ge=1, le=15)  # Strictly capped at 15 max videos per run
-    min_viral_score: int = Field(default=78, ge=0, le=100)
+    min_candidates: int = 6
+    max_candidates: int = Field(default=12, ge=0, le=15)  # Balanced sweet spot (12 default, 15 hard cap; 0 = auto 12)
+    min_viral_score: int = Field(default=76, ge=0, le=100)
     min_duration_sec: float = 15.0
     max_duration_sec: float = 120.0
     window_minutes: int = 18
@@ -101,9 +101,10 @@ class ReframeConfig(BaseModel):
     output_height: int = 1920
     output_fps: int = 30
     preserve_source_fps: bool = True
-    face_smoothing_alpha: float = 0.12
-    deadzone_ratio: float = 0.05
-    max_pan_speed_px_per_sec: float = 380.0
+    face_tracking_enabled: bool = True
+    face_smoothing_alpha: float = 0.18
+    deadzone_ratio: float = 0.03
+    max_pan_speed_px_per_sec: float = 460.0
     two_person_layout: Literal["split", "blurred_fit"] = "split"
     four_by_three_zoom: float = 1.06
     scene_threshold: float = 27.0
@@ -117,6 +118,8 @@ class CaptionsConfig(BaseModel):
     font_size: int = 94
     emphasis_scale: float = 1.26
     active_color: Literal["purple", "yellow", "red"] = "purple"
+    position: Literal["bottom", "lower_mid", "center", "upper_mid", "top"] = "bottom"
+    custom_y: Optional[int] = None
     safe_margin_left: int = 80
     safe_margin_right: int = 160
     safe_margin_bottom: int = 360
@@ -127,6 +130,11 @@ class OverlaysConfig(BaseModel):
     archive_tag: bool = False
     closing_card_text: str = "Follow for more"
     closing_card_duration_sec: float = Field(default=0.85, gt=0.1, lt=1.0)
+    attention_card_enabled: bool = False
+    attention_card_text: str = ""
+    attention_card_position: Literal["center", "upper", "lower"] = "center"
+    attention_card_duration_sec: float = 4.0
+    attention_card_style: Literal["white_box", "white_pill", "dark_neon"] = "white_box"
 
 
 class AudioConfig(BaseModel):
