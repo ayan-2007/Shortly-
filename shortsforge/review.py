@@ -101,54 +101,54 @@ def generate_review_html(
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ShortsForge Review - {html.escape(project_name)}</title>
+<title>Shortly Review - {html.escape(project_name)}</title>
 <style>
   :root {{
-    --bg: #0c0e14; --panel: #151924; --panel-2: #1c2231; --border: #2a3245;
-    --text: #eef2fa; --muted: #9aa7bf; --accent: #facc15; --green: #22c55e; --red: #ef4444; --blue: #38bdf8;
+    --bg: #121c2b; --panel: rgba(20, 31, 49, 0.88); --panel-2: rgba(27, 41, 64, 0.82); --border: rgba(251, 243, 231, 0.14);
+    --text: #f7f8fc; --muted: #93a6c4; --accent: #f26a3e; --green: #22c55e; --red: #f43f5e; --blue: #229bf0;
   }}
   * {{ box-sizing: border-box; }}
-  body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }}
-  header {{ position: sticky; top: 0; z-index: 20; background: rgba(12, 14, 20, 0.94); border-bottom: 1px solid var(--border); padding: 16px 28px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; }}
-  .brand h1 {{ margin: 0; font-size: 20px; }}
+  body {{ margin: 0; font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: radial-gradient(circle at 20% 0%, #123a6b 0%, #121c2b 58%, #0c1420 100%); color: var(--text); min-height: 100vh; }}
+  header {{ position: sticky; top: 0; z-index: 20; background: rgba(14, 23, 36, 0.88); backdrop-filter: blur(18px); border-bottom: 1px solid var(--border); padding: 16px 28px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; }}
+  .brand h1 {{ margin: 0; font-size: 20px; color: var(--blue); }}
   .brand .sub {{ font-size: 13px; color: var(--muted); margin-top: 2px; }}
   .toolbar {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
   .pill-stat {{ background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; font-size: 13px; font-weight: 600; }}
-  button {{ cursor: pointer; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; padding: 9px 14px; }}
-  .btn-primary {{ background: var(--accent); color: #111318; }}
+  button {{ cursor: pointer; border: none; border-radius: 999px; font-weight: 600; font-size: 13px; padding: 9px 16px; }}
+  .btn-primary {{ background: linear-gradient(135deg, #229bf0, #f26a3e); color: #ffffff; }}
   .btn-secondary {{ background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }}
   .btn-approve {{ background: rgba(34, 197, 94, 0.14); color: #86efac; border: 1px solid rgba(34, 197, 94, 0.45); }}
   .btn-approve.active {{ background: var(--green); color: #052e16; }}
-  .btn-reject {{ background: rgba(239, 68, 68, 0.14); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.45); }}
+  .btn-reject {{ background: rgba(244, 63, 94, 0.14); color: #fda4af; border: 1px solid rgba(244, 63, 94, 0.45); }}
   .btn-reject.active {{ background: var(--red); color: #ffffff; }}
   main {{ max-width: 1280px; margin: 24px auto 64px; padding: 0 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(560px, 1fr)); gap: 20px; }}
-  .card {{ background: var(--panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }}
+  .card {{ background: var(--panel); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; }}
   .card.approved {{ border-color: rgba(34, 197, 94, 0.7); }}
   .card.rejected {{ opacity: 0.72; }}
   .card-top {{ display: grid; grid-template-columns: 200px 1fr; gap: 16px; padding: 16px; }}
   .thumb-wrap {{ position: relative; border-radius: 10px; overflow: hidden; background: #07090e; aspect-ratio: 16 / 10; }}
   .thumb-wrap img {{ width: 100%; height: 100%; object-fit: cover; display: block; }}
-  .score-badge {{ position: absolute; top: 8px; left: 8px; background: rgba(12, 14, 20, 0.88); color: var(--accent); border: 1px solid rgba(250, 204, 21, 0.55); border-radius: 8px; padding: 4px 9px; font-weight: 800; font-size: 14px; }}
+  .score-badge {{ position: absolute; top: 8px; left: 8px; background: rgba(12, 20, 34, 0.9); color: #ffd3c4; border: 1px solid rgba(242, 106, 62, 0.58); border-radius: 8px; padding: 4px 9px; font-weight: 800; font-size: 14px; }}
   .time-badge {{ position: absolute; bottom: 8px; right: 8px; background: rgba(0, 0, 0, 0.78); color: #fff; border-radius: 6px; padding: 2px 7px; font-size: 11px; font-family: ui-monospace, monospace; }}
   .clip-id {{ font-weight: 700; font-size: 15px; color: var(--blue); }}
   .reason {{ font-size: 13px; color: var(--muted); margin: 6px 0 8px; }}
   .quote {{ font-size: 13px; font-style: italic; background: var(--panel-2); border-left: 3px solid var(--accent); padding: 8px 10px; border-radius: 6px; color: #f8fafc; }}
   .scores-row {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }}
   .mini-pill {{ font-size: 11px; color: var(--muted); background: #10141e; border: 1px solid var(--border); padding: 2px 7px; border-radius: 6px; }}
-  .warn-box {{ margin: 0 16px 10px; padding: 9px 12px; border-radius: 8px; background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.45); color: #fecaca; font-size: 12px; }}
-  .hook-section {{ padding: 12px 16px 16px; border-top: 1px solid var(--border); background: #121620; }}
+  .warn-box {{ margin: 0 16px 10px; padding: 9px 12px; border-radius: 8px; background: rgba(244, 63, 94, 0.14); border: 1px solid rgba(244, 63, 94, 0.45); color: #fecaca; font-size: 12px; }}
+  .hook-section {{ padding: 12px 16px 16px; border-top: 1px solid var(--border); background: rgba(11, 18, 31, 0.75); }}
   .hook-label-row {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 12px; color: var(--muted); }}
   .word-count.over {{ color: var(--red); font-weight: 700; }}
   .hook-input {{ width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: #0a0d14; color: #fff; font-size: 15px; font-weight: 700; }}
   .variants-select {{ width: 100%; margin-top: 8px; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 12px; }}
-  .card-actions {{ display: flex; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); background: #10131c; }}
+  .card-actions {{ display: flex; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); background: rgba(10, 16, 28, 0.8); }}
   .card-actions button {{ flex: 1; }}
 </style>
 </head>
 <body>
 <header>
   <div class="brand">
-    <h1>ShortsForge Review - <span id="proj-name"></span></h1>
+    <h1>Shortly Review - <span id="proj-name"></span></h1>
     <div class="sub" id="proj-sub"></div>
   </div>
   <div class="toolbar">

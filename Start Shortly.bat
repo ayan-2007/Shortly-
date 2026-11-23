@@ -1,5 +1,5 @@
 @echo off
-title ShortsForge Studio
+title Shortly Studio
 cd /d "%~dp0"
 
 if exist ".venv\Scripts\python.exe" (
@@ -10,6 +10,6 @@ if exist ".venv\Scripts\python.exe" (
 
 if errorlevel 1 (
     echo.
-    echo [ShortsForge] Could not start. Check Python / .venv installation above.
+    echo [Shortly] Could not start. Check Python / .venv installation above.
     pause
 )

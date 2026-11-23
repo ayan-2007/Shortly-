@@ -103,7 +103,7 @@ def test_review_html_and_auto_decisions_and_sources_warnings(tmp_path: Path) -> 
 
     review_path = generate_review_html("demo", "Alex Rivera", meta, [c1, c2], ws, cfg)
     html_text = review_path.read_text(encoding="utf-8")
-    assert "ShortsForge Review" in html_text
+    assert "Shortly Review" in html_text
     assert "His honest secret to never quitting." in html_text
     assert "Approve" in html_text and "Reject" in html_text
     assert "hook-input" in html_text

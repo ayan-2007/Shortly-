@@ -15,5 +15,5 @@ ElseIf fso.FileExists(py) Then
     cmd = """" & py & """ """ & fso.BuildPath(rootDir, "gui.py") & """"
     shell.Run cmd, 0, False
 Else
-    shell.Run "cmd /c ""Start ShortsForge.bat""", 1, False
+    shell.Run "cmd /c ""Start Shortly.bat""", 1, False
 End If

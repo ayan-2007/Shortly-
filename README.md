@@ -1,6 +1,6 @@
-# ShortsForge
+# Shortly
 
-Turn long interviews, shows, and podcasts into viral-style `1080×1920` (9:16) vertical Shorts locally—with truthful, transcript-verified 3-second hooks, smooth face-tracked reframing, animated word-by-word captions, broadcast lower-thirds, `-14 LUFS` mastered audio, and a local HTML review page.
+Turn long interviews, shows, and podcasts into viral-style `1080×1920` (9:16) vertical Shorts locally—with quality-first viral moment discovery (capped at 15 clips max), Iman Gadzhi / Alex Hormozi / Documentary kinetic captions & titles, smooth face-tracked reframing, optional video mirroring & studio quality filters, `-14 LUFS` mastered audio, and the local **Shortly Studio** web UI.
 
 ---
 
@@ -14,7 +14,7 @@ python gui.py
 python run.py gui
 ```
 
-Opens **ShortsForge Studio** in your browser (`http://127.0.0.1:8780`) with:
+Opens **Shortly Studio** in your browser (`http://127.0.0.1:8780`) with:
 - **New Project** wizard (URL or native **Browse File...** picker, hook style, caption preset, deceased-subject guardrail, archive tag)
 - **Live Review & Hooks** editor with instant auto-save and one-click **Render Approved Shorts**
 - **Rendered Shorts Player** with built-in 9:16 video preview, measured LUFS, one-click Copy buttons for all 5 titles / credited description / 8 hashtags / pinned comment, and `sources.txt` / `warnings.txt`

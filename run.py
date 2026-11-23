@@ -26,8 +26,8 @@ console = Console()
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="shortsforge",
-        description="ShortsForge - Turn long interviews, shows, and podcasts into viral-style vertical Shorts.",
+        prog="shortly",
+        description="Shortly - Turn long interviews, shows, and podcasts into viral-style vertical Shorts.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_render.add_argument("--force", action="store_true", help="Re-render clips even if already rendered")
 
     # `gui` subcommand
-    p_gui = sub.add_parser("gui", help="Launch the local ShortsForge Studio GUI in your browser")
+    p_gui = sub.add_parser("gui", help="Launch the local Shortly Studio GUI in your browser")
     p_gui.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
     p_gui.add_argument("--port", type=int, default=8780, help="Port to bind (default: 8780)")
     p_gui.add_argument("--config", default=None, help="Path to custom config.yaml")

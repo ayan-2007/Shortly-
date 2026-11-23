@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the ShortsForge Local Studio GUI."""
+"""Launch the Shortly Local Studio GUI."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from shortsforge.gui_server import launch_gui
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Launch the ShortsForge Local Studio GUI.")
+    parser = argparse.ArgumentParser(description="Launch the Shortly Local Studio GUI.")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8780, help="Port number (default: 8780)")
     parser.add_argument("--config", default=None, help="Path to custom config.yaml")
