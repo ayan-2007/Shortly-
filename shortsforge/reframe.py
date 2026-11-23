@@ -167,6 +167,52 @@ def _detect_faces_fast(face_det: FaceDetector, frame_bgr: np.ndarray, max_w: int
     ]
 
 
+def _pick_active_speaker_face(
+    detected: List[FaceBox],
+    small_gray: np.ndarray,
+    prev_small_gray: np.ndarray | None,
+    src_w: int,
+    src_h: int,
+    current_cam_x: float,
+    initialized_cam: bool,
+) -> FaceBox:
+    """Select the primary active speaker when multiple faces appear, using size, confidence, and mouth/face motion."""
+    if len(detected) == 1:
+        return detected[0]
+
+    gh, gw = small_gray.shape[:2]
+    sx = gw / max(1.0, float(src_w))
+    sy = gh / max(1.0, float(src_h))
+
+    best_face = detected[0]
+    best_rank = -1.0
+    for b in detected:
+        area_norm = max(1e-4, b.area / max(1.0, float(src_w * src_h)))
+        size_score = area_norm ** 0.55
+
+        # Measure lower-face (mouth/jaw) activity between consecutive frames to identify who is speaking
+        motion_bonus = 0.0
+        if prev_small_gray is not None and prev_small_gray.shape == small_gray.shape:
+            rx0 = max(0, min(gw - 2, int(round((b.x + b.w * 0.15) * sx))))
+            rx1 = max(rx0 + 2, min(gw, int(round((b.x + b.w * 0.85) * sx))))
+            ry0 = max(0, min(gh - 2, int(round((b.y + b.h * 0.42) * sy))))
+            ry1 = max(ry0 + 2, min(gh, int(round((b.y + b.h * 0.98) * sy))))
+            patch_now = small_gray[ry0:ry1, rx0:rx1].astype(np.float32)
+            patch_prev = prev_small_gray[ry0:ry1, rx0:rx1].astype(np.float32)
+            if patch_now.size > 0:
+                mad = float(np.mean(np.abs(patch_now - patch_prev)))
+                motion_bonus = min(1.35, mad / 9.5)
+
+        # Hysteresis: avoid erratic ping-ponging unless the other speaker has stronger motion or prominence
+        lock_bonus = 1.15 if (initialized_cam and abs(b.cx - current_cam_x) <= src_w * 0.16) else 1.0
+        rank = size_score * max(0.5, b.confidence) * (1.0 + motion_bonus) * lock_bonus
+        if rank > best_rank:
+            best_rank = rank
+            best_face = b
+
+    return best_face
+
+
 def _build_piecewise_crop_x_expr(
     keyframes: List[Tuple[float, float]],
     max_x: int,
@@ -175,18 +221,21 @@ def _build_piecewise_crop_x_expr(
     if not keyframes:
         return str(max(0, max_x // 2))
 
-    # Merge nearly-stationary adjacent keyframes to keep expression ultra-compact & fast
+    # Merge nearly-stationary adjacent keyframes while preserving scene-cut step pairs and smooth tracking
     simplified: List[Tuple[float, float]] = [keyframes[0]]
-    for t, x in keyframes[1:]:
-        if abs(x - simplified[-1][1]) >= 8.0:
+    for idx in range(1, len(keyframes)):
+        t, x = keyframes[idx]
+        prev_t, prev_x = simplified[-1]
+        is_cut_step = (t - prev_t) <= 0.09 and abs(x - prev_x) >= 12.0
+        if is_cut_step or abs(x - prev_x) >= 3.5 or idx == len(keyframes) - 1:
             simplified.append((t, x))
-    if len(simplified) == 1:
+    if len(simplified) == 1 or max(abs(x - simplified[0][1]) for _, x in simplified) < 3.5:
         return str(max(0, min(max_x, int(round(simplified[0][1])))))
 
-    # Keep at most 28 keyframes so FFmpeg evaluates the crop expression effortlessly
-    if len(simplified) > 28:
-        step = (len(simplified) - 1) / 27.0
-        simplified = [simplified[int(round(i * step))] for i in range(28)]
+    # Keep up to 36 keyframes so FFmpeg evaluates the crop expression effortlessly
+    if len(simplified) > 36:
+        step = (len(simplified) - 1) / 35.0
+        simplified = [simplified[int(round(i * step))] for i in range(36)]
 
     terms: List[str] = []
     t_first, x_first = simplified[0]
@@ -194,13 +243,16 @@ def _build_piecewise_crop_x_expr(
     for idx in range(len(simplified) - 1):
         t0, x0 = simplified[idx]
         t1, x1 = simplified[idx + 1]
-        dt = max(0.05, t1 - t0)
-        if abs(x1 - x0) < 1.0:
-            seg = f"{x0:.1f}"
+        dt = t1 - t0
+        if dt <= 0.09:
+            # Instant camera cut step
+            terms.append(f"gte(t,{t0:.2f})*lt(t,{t1:.2f})*{x0:.1f}")
+        elif abs(x1 - x0) < 1.0:
+            terms.append(f"gte(t,{t0:.2f})*lt(t,{t1:.2f})*{x0:.1f}")
         else:
-            slope = (x1 - x0) / dt
+            slope = (x1 - x0) / max(0.05, dt)
             seg = f"({x0:.1f}+({slope:.2f})*(t-{t0:.2f}))"
-        terms.append(f"gte(t,{t0:.2f})*lt(t,{t1:.2f})*{seg}")
+            terms.append(f"gte(t,{t0:.2f})*lt(t,{t1:.2f})*{seg}")
     t_last, x_last = simplified[-1]
     terms.append(f"gte(t,{t_last:.2f})*{x_last:.1f}")
     return f"'clip({'+'.join(terms)},0,{max_x})'"
@@ -215,10 +267,10 @@ def build_native_reframe_filter(
     thumb_output_jpg: Path | None = None,
     peak_offset_sec: float = 0.0,
 ) -> Tuple[str, float, float]:
-    """Scout face positions at lightweight 480p@1.5fps and return (ffmpeg_filter_str, out_fps, best_thumb_offset).
+    """Track speaker faces with OpenCV YuNet + active-speaker & scene-cut detection and return (ffmpeg_filter_str, out_fps, best_thumb_offset).
 
     Eliminates 4K raw BGR24 Python frame piping and multi-GB intermediate MP4 files for a 5x-10x speedup
-    while keeping full native source-resolution 9:16 crop sharpness.
+    while keeping full native source-resolution 9:16 crop sharpness and dynamic speaker tracking.
     """
     slice_dur = max(0.5, end_sec - start_sec)
     info = extract_stream_info(probe_media(source_video))
@@ -269,56 +321,86 @@ def build_native_reframe_filter(
     crop_w = max(2, crop_w - (crop_w % 2))
     max_x = max(0, src_w - crop_w)
 
+    face_tracking_on = getattr(config.reframe, "face_tracking_enabled", True)
     own_detector = detector is None
     face_det = detector or FaceDetector()
 
-    # Fast index-seek face scout: samples 8-14 evenly spaced frames directly via container index
-    # (3x-5x faster than sequential 4K frame decoding; falls back cleanly to ffmpeg pipe if needed).
-    n_samples = max(6, min(14, int(round(slice_dur / 3.5)) + 2))
+    # High-density timestamp face scout (~1 sample every 2.8s via container MSEC index seek)
+    n_samples = max(8, min(18, int(round(slice_dur / 2.8)) + 2))
     sample_offsets = [
-        min(slice_dur - 0.15, max(0.05, (i / max(1, n_samples - 1)) * max(0.2, slice_dur - 0.2)))
+        min(slice_dur - 0.12, max(0.05, (i / max(1, n_samples - 1)) * max(0.2, slice_dur - 0.18)))
         for i in range(n_samples)
     ]
 
     cam_x = src_w * 0.5
     initialized_cam = False
-    deadzone_px = src_w * max(0.08, config.reframe.deadzone_ratio)
+    deadzone_px = src_w * min(0.035, max(0.015, config.reframe.deadzone_ratio))
     sample_dt = slice_dur / max(1, n_samples - 1)
-    max_step_px = config.reframe.max_pan_speed_px_per_sec * 0.85 * max(0.5, sample_dt)
-    alpha = min(0.45, config.reframe.face_smoothing_alpha * 3.0)
+    max_step_px = max(80.0, config.reframe.max_pan_speed_px_per_sec * 0.95 * max(0.5, sample_dt))
+    alpha = min(0.65, max(0.32, config.reframe.face_smoothing_alpha * 2.5))
 
     keyframes: List[Tuple[float, float]] = []
     best_thumb_score = -1.0
     best_thumb_t = min(max(0.2, peak_offset_sec), max(0.2, slice_dur - 0.2))
     best_thumb_x0 = max(0, min(max_x, int(round(cam_x - crop_w * 0.5))))
     best_thumb_frame: np.ndarray | None = None
+    prev_small_gray: np.ndarray | None = None
+    prev_raw_target_x: float | None = None
 
     try:
         cap = cv2.VideoCapture(str(source_video))
-        cap_fps = cap.get(cv2.CAP_PROP_FPS) or out_fps_val
         if cap.isOpened():
+            small_h_g = max(2, int(round(160 * src_h / max(1, src_w))))
             for cur_t in sample_offsets:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, int((start_sec + cur_t) * cap_fps))
+                cap.set(cv2.CAP_PROP_POS_MSEC, (start_sec + cur_t) * 1000.0)
                 ok, frame = cap.read()
                 if not ok or frame is None:
                     continue
-                detected = _detect_faces_fast(face_det, frame, max_w=480)
+
+                small_g = cv2.cvtColor(
+                    cv2.resize(frame, (160, small_h_g), interpolation=cv2.INTER_AREA),
+                    cv2.COLOR_BGR2GRAY,
+                )
+                is_scene_cut = False
+                if prev_small_gray is not None and prev_small_gray.shape == small_g.shape:
+                    luma_diff = float(np.mean(np.abs(small_g.astype(np.float32) - prev_small_gray.astype(np.float32))))
+                    if luma_diff > 22.0:
+                        is_scene_cut = True
+
+                detected = _detect_faces_fast(face_det, frame, max_w=480) if face_tracking_on else []
                 if detected:
-                    primary = max(detected, key=lambda b: b.area)
+                    primary = _pick_active_speaker_face(
+                        detected=detected,
+                        small_gray=small_g,
+                        prev_small_gray=prev_small_gray,
+                        src_w=src_w,
+                        src_h=src_h,
+                        current_cam_x=cam_x,
+                        initialized_cam=initialized_cam,
+                    )
                     target_x = primary.cx
+                    if prev_raw_target_x is not None and abs(target_x - prev_raw_target_x) > src_w * 0.22:
+                        is_scene_cut = True
+                    prev_raw_target_x = target_x
+
                     if not initialized_cam:
                         cam_x = target_x
                         initialized_cam = True
+                        first_x0 = max(0.0, min(float(max_x), cam_x - crop_w * 0.5))
+                        keyframes = [(t_prev, first_x0) for t_prev, _ in keyframes]
+                    elif is_scene_cut:
+                        # Hard camera cut: hold previous position right up to the cut, then snap to new speaker
+                        prev_x0 = max(0.0, min(float(max_x), cam_x - crop_w * 0.5))
+                        if keyframes and cur_t - keyframes[-1][0] > 0.12:
+                            keyframes.append((round(cur_t - 0.04, 3), prev_x0))
+                        cam_x = target_x
                     else:
                         cam_x = _smooth_step(cam_x, target_x, alpha, deadzone_px, max_step_px)
 
+                prev_small_gray = small_g
                 x0 = max(0.0, min(float(max_x), cam_x - crop_w * 0.5))
-                keyframes.append((cur_t, x0))
+                keyframes.append((round(cur_t, 3), x0))
 
-                small_g = cv2.cvtColor(
-                    cv2.resize(frame, (320, max(2, int(round(320 * src_h / max(1, src_w))))), interpolation=cv2.INTER_AREA),
-                    cv2.COLOR_BGR2GRAY,
-                )
                 sharpness = float(cv2.Laplacian(small_g, cv2.CV_64F).var())
                 face_bonus = sum(f.area for f in detected) / max(1.0, src_w * src_h) * 1800.0
                 peak_bonus = 200.0 if abs(cur_t - peak_offset_sec) <= 2.5 else 0.0

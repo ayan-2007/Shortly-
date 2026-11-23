@@ -324,6 +324,9 @@ def _extract_video_specific_metadata(
     }
 
 
+_CLOUD_PROVIDER_DISABLED: Dict[str, bool] = {}
+
+
 class LLMClient:
     """Unified JSON-oriented LLM wrapper with disk caching and automatic zero-key fallback."""
 
@@ -334,10 +337,10 @@ class LLMClient:
         self.last_cache_hit = False
 
     def _effective_provider(self) -> str:
-        """Use configured cloud LLM if its API key is set in .env; otherwise transparently use local engine."""
-        if self.provider == "gemini" and get_env_key("GEMINI_API_KEY"):
+        """Use configured cloud LLM if its API key is set in .env and healthy; otherwise transparently use local engine."""
+        if self.provider == "gemini" and get_env_key("GEMINI_API_KEY") and not _CLOUD_PROVIDER_DISABLED.get("gemini"):
             return "gemini"
-        if self.provider == "claude" and get_env_key("ANTHROPIC_API_KEY"):
+        if self.provider == "claude" and get_env_key("ANTHROPIC_API_KEY") and not _CLOUD_PROVIDER_DISABLED.get("claude"):
             return "claude"
         return "mock"
 
@@ -382,12 +385,18 @@ class LLMClient:
         if eff_provider == "gemini":
             try:
                 result = self._call_gemini(system_prompt, user_prompt)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                err_s = str(exc).upper()
+                if any(tok in err_s for tok in ("404", "NOT_FOUND", "401", "403", "429", "PERMISSION_DENIED", "INVALID_ARGUMENT", "RESOURCE_EXHAUSTED", "CERTIFICATE_VERIFY_FAILED")):
+                    _CLOUD_PROVIDER_DISABLED["gemini"] = True
                 result = None
         elif eff_provider == "claude":
             try:
                 result = self._call_claude(system_prompt, user_prompt)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                err_s = str(exc).upper()
+                if any(tok in err_s for tok in ("404", "401", "403", "429", "NOT_FOUND", "AUTHENTICATION", "RATE_LIMIT")):
+                    _CLOUD_PROVIDER_DISABLED["claude"] = True
                 result = None
 
         if result is None:

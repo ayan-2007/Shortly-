@@ -273,12 +273,21 @@ def _fetch_yt_json3_captions(info: dict, dest_path: Path) -> Optional[Path]:
             if j3_urls:
                 try:
                     raw = urllib.request.urlopen(j3_urls[0], timeout=15).read()  # noqa: S310
-                    if len(raw) > 256:
-                        dest_path.parent.mkdir(parents=True, exist_ok=True)
-                        dest_path.write_bytes(raw)
-                        return dest_path
                 except Exception:  # noqa: BLE001
-                    continue
+                    try:
+                        import ssl
+
+                        raw = urllib.request.urlopen(  # noqa: S310
+                            j3_urls[0],
+                            context=ssl._create_unverified_context(),
+                            timeout=15,
+                        ).read()
+                    except Exception:  # noqa: BLE001
+                        continue
+                if len(raw) > 256:
+                    dest_path.parent.mkdir(parents=True, exist_ok=True)
+                    dest_path.write_bytes(raw)
+                    return dest_path
     return None
 
 

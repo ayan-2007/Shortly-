@@ -39,37 +39,53 @@ class FaceBox:
         return max(0, self.w * self.h)
 
 
+_YUNET_MODEL_PATH = Path(__file__).resolve().parent / "assets" / "face_detection_yunet_2023mar.onnx"
+_HAAR_FRONTAL_PATH = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
+_HAAR_ALT2_PATH = Path(cv2.data.haarcascades) / "haarcascade_frontalface_alt2.xml"
+_HAAR_PROFILE_PATH = Path(cv2.data.haarcascades) / "haarcascade_profileface.xml"
+
+
 class FaceDetector:
-    """Cross-platform face detector using MediaPipe when available, with OpenCV Haar fallback."""
+    """High-speed cross-platform face detector using OpenCV YuNet DNN with multi-angle Haar frontal+profile fallback."""
 
     def __init__(self, min_confidence: float = 0.5) -> None:
         self.min_confidence = min_confidence
+        self._yunet = None
         self._mp_detector = None
         self._haar = None
+        self._haar_alt2 = None
+        self._haar_profile = None
         self._backend = "haar"
 
-        try:
-            import mediapipe as mp  # type: ignore
-
-            if hasattr(mp, "solutions") and hasattr(mp.solutions, "face_detection"):
-                self._mp_detector = mp.solutions.face_detection.FaceDetection(
-                    model_selection=1,
-                    min_detection_confidence=min_confidence,
+        # 1. Primary ultra-fast neural detector: OpenCV YuNet ONNX (~5ms init, ~12ms/frame inference, frontal + 3/4 + profile)
+        if _YUNET_MODEL_PATH.is_file() and hasattr(cv2, "FaceDetectorYN"):
+            try:
+                self._yunet = cv2.FaceDetectorYN.create(
+                    str(_YUNET_MODEL_PATH),
+                    "",
+                    (480, 270),
+                    max(0.45, float(min_confidence)),
+                    0.3,
+                    5000,
                 )
-                self._backend = "mediapipe"
-        except Exception:  # noqa: BLE001
-            self._mp_detector = None
+                self._backend = "yunet"
+            except Exception:  # noqa: BLE001
+                self._yunet = None
 
-        cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
-        if cascade_path.exists():
-            self._haar = cv2.CascadeClassifier(str(cascade_path))
+        # 2. Secondary fallback: Frontal + Profile Haar cascades (100% offline & catches synthetic/extreme-profile frames)
+        if _HAAR_FRONTAL_PATH.exists():
+            self._haar = cv2.CascadeClassifier(str(_HAAR_FRONTAL_PATH))
+        if _HAAR_ALT2_PATH.exists():
+            self._haar_alt2 = cv2.CascadeClassifier(str(_HAAR_ALT2_PATH))
+        if _HAAR_PROFILE_PATH.exists():
+            self._haar_profile = cv2.CascadeClassifier(str(_HAAR_PROFILE_PATH))
 
     @property
     def backend(self) -> str:
         return self._backend
 
     def detect(self, frame_bgr: np.ndarray) -> List[FaceBox]:
-        """Detect faces in a BGR image (downscaled to <=480p for 30x faster CPU inference), sorted left-to-right."""
+        """Detect faces in a BGR image (downscaled to <=480p for fast CPU inference), sorted left-to-right."""
         h, w = frame_bgr.shape[:2]
         if h == 0 or w == 0:
             return []
@@ -78,48 +94,76 @@ class FaceDetector:
         work_frame = frame_bgr
         if w > 480:
             scale = 480.0 / w
-            work_frame = cv2.resize(frame_bgr, (480, max(1, int(round(h * scale)))), interpolation=cv2.INTER_AREA)
+            work_frame = cv2.resize(frame_bgr, (480, max(2, int(round(h * scale)))), interpolation=cv2.INTER_AREA)
         wh, ww = work_frame.shape[:2]
         inv_scale = 1.0 / scale
+        min_face_area = (w * h) * 0.0022  # Filter out tiny background poster/artifact faces (<4.7% of frame width)
 
         boxes: List[FaceBox] = []
-        if self._mp_detector is not None:
-            rgb = cv2.cvtColor(work_frame, cv2.COLOR_BGR2RGB)
-            res = self._mp_detector.process(rgb)
-            if res and res.detections:
-                for det in res.detections:
-                    bb = det.location_data.relative_bounding_box
-                    bx = max(0, int(bb.xmin * w))
-                    by = max(0, int(bb.ymin * h))
-                    bw = min(w - bx, max(1, int(bb.width * w)))
-                    bh = min(h - by, max(1, int(bb.height * h)))
-                    score = float(det.score[0]) if det.score else 0.8
-                    boxes.append(FaceBox(x=bx, y=by, w=bw, h=bh, confidence=score))
+        if self._yunet is not None:
+            try:
+                self._yunet.setInputSize((ww, wh))
+                _, dets = self._yunet.detect(work_frame)
+                if dets is not None and len(dets) > 0:
+                    for det in dets:
+                        bx = max(0, int(round(float(det[0]) * inv_scale)))
+                        by = max(0, int(round(float(det[1]) * inv_scale)))
+                        bw = min(w - bx, max(1, int(round(float(det[2]) * inv_scale))))
+                        bh = min(h - by, max(1, int(round(float(det[3]) * inv_scale))))
+                        score = float(det[-1])
+                        if bw * bh >= min_face_area and score >= self.min_confidence:
+                            boxes.append(FaceBox(x=bx, y=by, w=bw, h=bh, confidence=score))
+            except Exception:  # noqa: BLE001
+                pass
 
-        if not boxes and self._haar is not None:
+        if not boxes:
             gray = cv2.cvtColor(work_frame, cv2.COLOR_BGR2GRAY)
-            min_dim = max(20, int(min(wh, ww) * 0.06))
-            rects = self._haar.detectMultiScale(
-                gray,
-                scaleFactor=1.15,
-                minNeighbors=4,
-                minSize=(min_dim, min_dim),
-            )
-            for (rx, ry, rw, rh) in rects:
-                boxes.append(
-                    FaceBox(
-                        x=int(round(rx * inv_scale)),
-                        y=int(round(ry * inv_scale)),
-                        w=int(round(rw * inv_scale)),
-                        h=int(round(rh * inv_scale)),
-                        confidence=0.75,
-                    )
+            min_dim = max(22, int(min(wh, ww) * 0.075))
+            for cascade in (self._haar_alt2, self._haar):
+                if cascade is None:
+                    continue
+                rects = cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.15,
+                    minNeighbors=4,
+                    minSize=(min_dim, min_dim),
                 )
+                if len(rects) > 0:
+                    for (rx, ry, rw, rh) in rects:
+                        bx = int(round(rx * inv_scale))
+                        by = int(round(ry * inv_scale))
+                        bw = int(round(rw * inv_scale))
+                        bh = int(round(rh * inv_scale))
+                        if bw * bh >= min_face_area:
+                            boxes.append(FaceBox(x=bx, y=by, w=bw, h=bh, confidence=0.78))
+                    break
+
+            # Side-profile fallback (checks both left-facing and right-facing podcast camera angles)
+            if not boxes and self._haar_profile is not None:
+                for flipped in (False, True):
+                    img_g = cv2.flip(gray, 1) if flipped else gray
+                    rects = self._haar_profile.detectMultiScale(
+                        img_g,
+                        scaleFactor=1.16,
+                        minNeighbors=4,
+                        minSize=(min_dim, min_dim),
+                    )
+                    if len(rects) > 0:
+                        for (rx, ry, rw, rh) in rects:
+                            real_rx = (ww - rx - rw) if flipped else rx
+                            bx = max(0, int(round(real_rx * inv_scale)))
+                            by = max(0, int(round(ry * inv_scale)))
+                            bw = int(round(rw * inv_scale))
+                            bh = int(round(rh * inv_scale))
+                            if bw * bh >= min_face_area:
+                                boxes.append(FaceBox(x=bx, y=by, w=bw, h=bh, confidence=0.72))
+                        break
 
         boxes.sort(key=lambda b: b.cx)
         return boxes
 
     def close(self) -> None:
+        self._yunet = None
         if self._mp_detector is not None:
             try:
                 self._mp_detector.close()
@@ -185,6 +229,7 @@ def evaluate_candidate_quality(
     config: AppConfig,
     detector: Optional[FaceDetector] = None,
     thumb_output_path: Optional[Path] = None,
+    video_cap: Optional[cv2.VideoCapture] = None,
 ) -> QualityReport:
     """Inspect sampled video frames & audio slice; also extract best preview thumbnail."""
     own_detector = detector is None
@@ -195,8 +240,53 @@ def evaluate_candidate_quality(
     best_thumb_score = -1.0
     best_thumb_frame: Optional[np.ndarray] = None
 
-    # Fast path for deep timestamps (>300s) in long multi-hour videos: use FFmpeg container index seek
-    if candidate.start > 300.0 and thumb_output_path is not None:
+    own_cap = video_cap is None
+    cap = video_cap if video_cap is not None else cv2.VideoCapture(str(video_path))
+    try:
+        if cap.isOpened():
+            clip_dur = max(1.0, candidate.end - candidate.start)
+            sample_step_sec = max(1.0 / max(0.2, config.quality_check.sample_fps), clip_dur / 4.0)
+
+            t = candidate.start + 0.1
+            while t <= candidate.end:
+                cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    t += sample_step_sec
+                    continue
+
+                total_frames += 1
+                faces = face_det.detect(frame)
+                has_face = len(faces) > 0
+                if has_face:
+                    face_frames += 1
+                elif is_mostly_graphic_frame(frame):
+                    graphic_frames += 1
+
+                fh, fw = frame.shape[:2]
+                small = (
+                    cv2.resize(frame, (320, max(1, int(320 * fh / max(1, fw)))), interpolation=cv2.INTER_AREA)
+                    if fw > 320
+                    else frame
+                )
+                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+                sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+                face_bonus = sum(f.area for f in faces) / max(1.0, fh * fw) * 1200.0
+                peak_bonus = 120.0 if (candidate.peak_start <= t <= candidate.peak_end) else 0.0
+                thumb_score = sharpness + face_bonus + peak_bonus
+                if thumb_score > best_thumb_score:
+                    best_thumb_score = thumb_score
+                    best_thumb_frame = frame.copy()
+
+                t += sample_step_sec
+    finally:
+        if own_cap:
+            cap.release()
+
+    if best_thumb_frame is not None and thumb_output_path is not None:
+        thumb_output_path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(thumb_output_path), best_thumb_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+    elif total_frames == 0 and thumb_output_path is not None:
         thumb_output_path.parent.mkdir(parents=True, exist_ok=True)
         mid_t = (candidate.peak_start + candidate.peak_end) * 0.5
         try:
@@ -216,46 +306,6 @@ def evaluate_candidate_quality(
                     face_frames = 1
         except Exception:  # noqa: BLE001
             total_frames = 0
-
-    if total_frames == 0:
-        cap = cv2.VideoCapture(str(video_path))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        clip_dur = max(1.0, candidate.end - candidate.start)
-        sample_step_sec = max(1.0 / max(0.2, config.quality_check.sample_fps), clip_dur / 4.0)
-
-        t = candidate.start
-        while t <= candidate.end:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                t += sample_step_sec
-                continue
-
-            total_frames += 1
-            faces = face_det.detect(frame)
-            has_face = len(faces) > 0
-            if has_face:
-                face_frames += 1
-            elif is_mostly_graphic_frame(frame):
-                graphic_frames += 1
-
-            fh, fw = frame.shape[:2]
-            small = cv2.resize(frame, (320, max(1, int(320 * fh / max(1, fw)))), interpolation=cv2.INTER_AREA) if fw > 320 else frame
-            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-            sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-            face_bonus = sum(f.area for f in faces) / max(1.0, fh * fw) * 1200.0
-            peak_bonus = 120.0 if (candidate.peak_start <= t <= candidate.peak_end) else 0.0
-            thumb_score = sharpness + face_bonus + peak_bonus
-            if thumb_score > best_thumb_score:
-                best_thumb_score = thumb_score
-                best_thumb_frame = frame.copy()
-
-            t += sample_step_sec
-
-        cap.release()
-        if best_thumb_frame is not None and thumb_output_path is not None:
-            thumb_output_path.parent.mkdir(parents=True, exist_ok=True)
-            cv2.imwrite(str(thumb_output_path), best_thumb_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
 
     if own_detector:
         face_det.close()
