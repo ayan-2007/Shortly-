@@ -89,7 +89,7 @@ def test_gui_server_endpoints_and_range_streaming(tmp_path: Path) -> None:
     base = f"http://127.0.0.1:{port}"
 
     try:
-        # 1. Root HTML serves Shortly Studio UI + static logo assets
+        # 1. Root HTML serves Shortly Studio UI + static logo assets + Live Post-Render Video Editor
         with urllib.request.urlopen(f"{base}/") as resp:
             html_body = resp.read().decode("utf-8")
             assert resp.status == 200
@@ -97,6 +97,10 @@ def test_gui_server_endpoints_and_range_streaming(tmp_path: Path) -> None:
             assert "pulse-bg-canvas" in html_body
             assert "shiny-cta" in html_body
             assert "/static/shortly-logo.png" in html_body
+            assert "LIVE_FILTER_CSS_MAP" in html_body
+            assert "/api/jobs/edit-clip" in html_body
+            assert "Center White Box Card" in html_body
+            assert "Exact Center (Middle of Screen)" in html_body
 
         for asset in ("/static/shortly-logo.png", "/static/shortly-icon.png", "/static/shortly-pulse.png", "/favicon.ico"):
             with urllib.request.urlopen(f"{base}{asset}") as resp:

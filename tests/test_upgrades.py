@@ -318,3 +318,119 @@ def test_kinetic_hook_headline_and_video_specific_metadata() -> None:
     assert "Dialogue: 1," not in ass_clean
     assert "Dialogue: 0," in ass_clean
     assert PRESETS["iman"].active_purple in ass_clean
+
+
+def test_post_render_caption_positions_and_white_center_attention_card(tmp_path: Path) -> None:
+    from PIL import Image
+    from shortsforge.captions import resolve_caption_center_y
+    from shortsforge.overlays import render_attention_card_png
+
+    cfg = AppConfig()
+    words = [
+        WordTimestamp(word="Wait", start=5.0, end=5.3),
+        WordTimestamp(word="for", start=5.3, end=5.5),
+        WordTimestamp(word="this.", start=5.5, end=5.9),
+    ]
+
+    # 1. Verify caption vertical positions (Bottom, Exact Center, Upper-Mid, Lower-Mid, Top)
+    cfg.captions.position = "bottom"
+    y_bot = resolve_caption_center_y(cfg)
+    assert y_bot == 1500
+    ass_bot = build_ass_captions(words, clip_start=5.0, time_offset=0.0, config=cfg)
+    assert "\\move(540,1526,540,1500," in ass_bot
+
+    cfg.captions.position = "center"
+    y_cen = resolve_caption_center_y(cfg)
+    assert y_cen == 960  # Exact center of 1080x1920 screen!
+    ass_cen = build_ass_captions(words, clip_start=5.0, time_offset=0.0, config=cfg)
+    assert "\\move(540,986,540,960," in ass_cen
+
+    cfg.captions.position = "top"
+    assert resolve_caption_center_y(cfg) < 500
+
+    # 2. Verify White Box Center Attention Card PNG generator
+    cfg.captions.position = "bottom"
+    card_png = render_attention_card_png(
+        card_text="The $60,000 Rule Nobody Talks About",
+        output_path=tmp_path / "center_white_box.png",
+        config=cfg,
+        position="center",
+        style="white_box",
+    )
+    assert card_png.exists()
+    with Image.open(card_png) as im:
+        assert im.size == (1080, 1920)
+        assert im.mode == "RGBA"
+        # Center of screen should have opaque white box / dark text pixels
+        center_alpha = im.getpixel((540, int(1920 * 0.46)))[3]
+        assert center_alpha > 200
+
+
+def test_active_speaker_face_tracking_and_balanced_clip_threshold() -> None:
+    import numpy as np
+    from shortsforge.quality_check import FaceBox, FaceDetector
+    from shortsforge.reframe import _build_piecewise_crop_x_expr, _pick_active_speaker_face
+    from shortsforge.review import save_auto_decisions
+    from shortsforge.state import ProjectWorkspace
+
+    # 1. Fast neural FaceDetector initialization
+    det = FaceDetector()
+    assert det.backend in ("yunet", "haar")
+    det.close()
+
+    # 2. Active speaker selection picks the face with lower-face/mouth motion in a 2-person wide shot
+    prev_g = np.full((90, 160), 100, dtype=np.uint8)
+    curr_g = prev_g.copy()
+    # Add mouth motion on the right speaker (around x=1920 in 2560x1440 -> x=120 in 160x90)
+    curr_g[30:55, 105:135] = 220
+
+    left_speaker = FaceBox(x=400, y=300, w=320, h=380, confidence=0.88)
+    right_speaker = FaceBox(x=1750, y=300, w=320, h=380, confidence=0.88)
+    picked = _pick_active_speaker_face(
+        detected=[left_speaker, right_speaker],
+        small_gray=curr_g,
+        prev_small_gray=prev_g,
+        src_w=2560,
+        src_h=1440,
+        current_cam_x=1280.0,
+        initialized_cam=False,
+    )
+    assert picked.cx == right_speaker.cx
+
+    # 3. Piecewise crop expression handles both scene-cut steps and smooth tracking
+    expr = _build_piecewise_crop_x_expr([(0.05, 300.0), (5.00, 300.0), (5.04, 1100.0), (10.0, 1180.0)], max_x=1750)
+    assert "clip(" in expr
+    assert "1100.0" in expr
+
+    # 4. Balanced clip count sweet spot: high threshold never drops to 3 on a 10-clip podcast, low threshold never exceeds cap
+    from shortsforge.models import ClipCandidate
+
+    many_cands = [
+        ClipCandidate(
+            id=f"clip_{i:02d}",
+            start=i * 60.0,
+            end=i * 60.0 + 35.0,
+            score=96 - i,
+            reason="Viral moment",
+            key_quote="The truth is discipline wins.",
+            transcript_text="The truth is discipline wins every single time.",
+            peak_start=i * 60.0 + 10.0,
+            peak_end=i * 60.0 + 13.0,
+        )
+        for i in range(1, 22)
+    ]
+    ws = ProjectWorkspace(Path("projects/_tmp_balance_test"), Path("outputs/_tmp_balance_test"))
+    try:
+        # Even if threshold is set too high (95 -> only 2 clips >= 95), adaptive floor approves 6-8 clips
+        high_doc = save_auto_decisions("bal", many_cands, ws, threshold=95, max_approved=12)
+        high_approved = sum(1 for d in high_doc.decisions.values() if d.approved)
+        assert 6 <= high_approved <= 12
+
+        # Even if threshold is set too low (10 -> all 21 clips >= 10), hard ceiling caps at 12
+        low_doc = save_auto_decisions("bal", many_cands, ws, threshold=10, max_approved=12)
+        low_approved = sum(1 for d in low_doc.decisions.values() if d.approved)
+        assert low_approved == 12
+    finally:
+        import shutil
+        shutil.rmtree(ws.project_dir, ignore_errors=True)
+        shutil.rmtree(ws.output_dir, ignore_errors=True)

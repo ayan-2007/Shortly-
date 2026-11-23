@@ -28,7 +28,7 @@ if str(ROOT) not in sys.path:
 from shortsforge.audio import measure_integrated_lufs
 from shortsforge.config import AppConfig, load_config, resolve_font
 from shortsforge.ffmpeg_utils import extract_stream_info, probe_media, run_ffmpeg
-from shortsforge.pipeline import run_new_project, run_render_project
+from shortsforge.pipeline import run_edit_single_clip, run_new_project, run_render_project
 
 
 SMOKE_SCRIPT = (
@@ -239,6 +239,23 @@ def main() -> int:
     assert len(first.titles) == 5, f"Expected 5 titles, got {len(first.titles)}"
     assert len(first.hashtags) >= 8, f"Expected >=8 hashtags, got {len(first.hashtags)}"
     assert first.pinned_comment.strip(), "Missing pinned comment question"
+
+    print("[4/4] Testing post-render runtime edit (Filters + Center Captions + Center White Attention Box Card)...")
+    cfg.captions.position = "center"
+    cfg.export.video_filters = ["cinematic_grade", "vibrant_pop"]
+    cfg.overlays.attention_card_enabled = True
+    cfg.overlays.attention_card_text = "Never Quit On Your Worst Day"
+    cfg.overlays.attention_card_position = "center"
+    cfg.overlays.attention_card_duration_sec = 4.0
+    cfg.overlays.attention_card_style = "white_box"
+    edited_meta = run_edit_single_clip(
+        project_name=project_name,
+        clip_id=first.clip_id,
+        config=cfg,
+    )
+    assert edited_meta.caption_position == "center"
+    assert edited_meta.attention_card_enabled is True
+    assert "cinematic_grade" in edited_meta.video_filters
 
     info = extract_stream_info(probe_media(mp4_path))
     lufs = measure_integrated_lufs(mp4_path)
