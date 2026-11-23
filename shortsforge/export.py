@@ -8,7 +8,7 @@ from typing import List, Optional
 
 import cv2
 
-from shortsforge.audio import normalize_to_lufs
+from shortsforge.audio import build_master_audio, normalize_to_lufs
 from shortsforge.captions import write_ass_captions
 from shortsforge.config import AppConfig, resolve_font
 from shortsforge.ffmpeg_utils import (
@@ -25,31 +25,27 @@ from shortsforge.models import (
     VideoMetadata,
     WordTimestamp,
 )
-from shortsforge.overlays import (
-    render_closing_card_png,
-    render_hook_banner_png,
-    render_lower_third_png,
-    render_persistent_credit_png,
-)
 from shortsforge.quality_check import FaceDetector
 from shortsforge.reframe import reframe_clip_to_vertical
 from shortsforge.tts import synthesize_narrator
 
 
-EXPORT_META_SYSTEM = """You write YouTube Shorts / Reels / TikTok publishing metadata grounded strictly in the transcript.
+EXPORT_META_SYSTEM = """You write YouTube Shorts / Reels / TikTok publishing metadata grounded strictly in the clip and source video.
 
 RULES:
 - Never invent facts, quotes, or claims not present in the transcript.
-- Return exactly 5 distinct title options (concise, high CTR, truthful).
-- Write a clear 2-3 sentence description that credits the original source/channel/show.
-- Return exactly 8 relevant hashtags starting with '#'.
-- Return 1 engaging pinned-comment question that sparks respectful discussion.
+- Return exactly 5 distinct, specific, high-CTR titles matching this exact clip's topic/numbers/takeaway.
+- Write a ready-to-paste social `post_caption` (hook + key quote + engaging question + relevant hashtags).
+- Write a clear 2-3 sentence `description` summarizing the clip and crediting the original source/channel/show.
+- Return 8-9 topic-specific `hashtags` starting with '#' tailored to what is actually discussed in this clip.
+- Return 1 engaging `pinned_comment` question grounded in the clip.
 
 Return strict JSON:
 {
   "titles": ["Title 1", "Title 2", "Title 3", "Title 4", "Title 5"],
+  "post_caption": "Punchy hook + takeaway + question + hashtags",
   "description": "Description crediting the original source...",
-  "hashtags": ["#shorts", "#interview", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8"],
+  "hashtags": ["#topic1", "#topic2", "#speaker", "#shorts", "#viral", "#tag6", "#tag7", "#tag8"],
   "pinned_comment": "Thought-provoking question for the comments?"
 }"""
 
@@ -57,6 +53,46 @@ Return strict JSON:
 def _slugify(text: str, max_len: int = 36) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", text.lower()).strip("_")
     return (slug[:max_len].strip("_")) or "short"
+
+
+VIDEO_QUALITY_FILTERS: dict[str, str] = {
+    "cinematic_grade": "eq=contrast=1.08:brightness=0.015:saturation=1.14:gamma=0.97",
+    "sharp_hd": "cas=0.38,unsharp=5:5:0.55:3:3:0.0",
+    "denoise_clean": "hqdn3d=2.0:1.5:3.0:2.5",
+    "warm_studio": "colorbalance=rs=0.03:gs=0.01:bs=-0.03:rh=0.04:gh=0.01:bh=-0.03,vignette=PI/6",
+}
+
+
+def build_video_enhancement_filter_chain(config: AppConfig, was_upscaled: bool = False) -> str:
+    """Build FFmpeg video filter chain for horizontal mirroring and 1-2 user-chosen quality enhancement filters."""
+    stages: List[str] = []
+    if getattr(config.export, "mirror_video", False):
+        stages.append("hflip")
+
+    raw_filters = list(getattr(config.export, "video_filters", []) or [])
+    chosen: List[str] = []
+    for f_name in raw_filters:
+        key = str(f_name).strip().lower()
+        if key in VIDEO_QUALITY_FILTERS and key not in chosen:
+            chosen.append(key)
+        if len(chosen) >= 2:
+            break
+
+    # Always run denoise before sharpening when both are selected for cleaner detail
+    if "denoise_clean" in chosen and "sharp_hd" in chosen:
+        if chosen.index("denoise_clean") > chosen.index("sharp_hd"):
+            chosen.remove("denoise_clean")
+            chosen.insert(0, "denoise_clean")
+
+    for key in chosen:
+        stages.append(VIDEO_QUALITY_FILTERS[key])
+
+    if "sharp_hd" not in chosen and was_upscaled:
+        sharpen_val = max(0.0, min(1.0, config.export.sharpen_strength))
+        if sharpen_val > 0:
+            stages.append(f"cas={sharpen_val:.2f}")
+
+    return ("," + ",".join(stages)) if stages else ""
 
 
 def _extract_best_vertical_thumbnail(
@@ -106,18 +142,25 @@ def _extract_best_vertical_thumbnail(
     return output_jpg
 
 
+def _intermediate_codec_args(config: AppConfig) -> List[str]:
+    if getattr(config.export, "lossless_intermediates", True):
+        return ["-c:v", "libx264", "-qp", "0", "-preset", "ultrafast", "-pix_fmt", "yuv420p"]
+    return ["-c:v", "libx264", "-profile:v", "high", "-crf", "12", "-preset", "fast", "-pix_fmt", "yuv420p"]
+
+
 def _build_hook_segment(
     reframed_main: Path,
     candidate: ClipCandidate,
     hook_text: str,
-    hook_banner_png: Path,
     work_dir: Path,
     config: AppConfig,
 ) -> tuple[Path, Path, float]:
-    """Build either a cold-open peak clip OR a freeze-frame slow-zoom + narrator TTS hook segment."""
-    fps = config.reframe.output_fps
+    """Build the crux cold-open hook clip with kinetic zoom, flash, contrast punch, and dramatic framing."""
+    main_info = extract_stream_info(probe_media(reframed_main))
+    fps = float(main_info.get("fps") or config.reframe.output_fps)
     out_w = config.reframe.output_width
     out_h = config.reframe.output_height
+    enc_args = _intermediate_codec_args(config)
 
     hook_video = work_dir / "hook_video.mp4"
     hook_audio = work_dir / "hook_audio.wav"
@@ -137,28 +180,22 @@ def _build_hook_segment(
         ])
 
         total_frames = max(1, int(round(hook_dur * fps)))
-        zoom_end = max(1.02, config.hook.freeze_zoom_end)
+        zoom_end = max(1.04, config.hook.freeze_zoom_end)
         zoom_inc = (zoom_end - 1.0) / total_frames
 
         run_ffmpeg([
             "-loop", "1",
             "-i", str(freeze_png),
-            "-loop", "1",
-            "-i", str(hook_banner_png),
             "-filter_complex",
             (
                 f"[0:v]scale={out_w}:{out_h},zoompan=z='min(zoom+{zoom_inc:.6f},{zoom_end:.3f})':"
-                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={out_w}x{out_h}:fps={fps},"
-                f"format=yuv420p[bg];"
-                f"[1:v]format=rgba,fade=t=in:st=0:d=0.22:alpha=1[bn];"
-                f"[bg][bn]overlay=0:0:shortest=1,format=yuv420p[vout]"
+                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={out_w}x{out_h}:fps={fps:.3f},"
+                "eq=contrast=1.08:saturation=1.12,vignette=PI/5,fade=t=in:st=0:d=0.14:color=white,format=yuv420p[vout]"
             ),
             "-map", "[vout]",
             "-t", f"{hook_dur:.3f}",
-            "-r", str(fps),
-            "-c:v", "libx264",
-            "-crf", "17",
-            "-preset", "veryfast",
+            "-r", f"{fps:.3f}",
+            *enc_args,
             "-an",
             str(hook_video),
         ])
@@ -169,37 +206,30 @@ def _build_hook_segment(
         config.hook.cold_open_min_sec,
         min(config.hook.cold_open_max_sec, candidate.peak_end - candidate.peak_start),
     )
-    main_info = extract_stream_info(probe_media(reframed_main))
     if peak_rel_start + peak_dur > main_info["duration"]:
         peak_rel_start = max(0.0, main_info["duration"] - peak_dur)
         peak_dur = min(peak_dur, main_info["duration"])
 
+    # Smooth kinetic zoom-in (1.0 -> 1.11) + dramatic contrast/vibrance pop + vignette + white opener flash
+    # Extract both hook_video and hook_audio in a single FFmpeg pass
+    zoom_rate = 0.11 / max(0.5, peak_dur)
     run_ffmpeg([
         "-ss", f"{peak_rel_start:.3f}",
         "-t", f"{peak_dur:.3f}",
         "-i", str(reframed_main),
-        "-loop", "1",
-        "-i", str(hook_banner_png),
-        "-filter_complex",
+        "-vf",
         (
-            "[0:v]setpts=PTS-STARTPTS,format=yuv420p[base];"
-            "[1:v]format=rgba,fade=t=in:st=0:d=0.18:alpha=1[bn];"
-            "[base][bn]overlay=0:0:shortest=1,format=yuv420p[vout]"
+            "setpts=PTS-STARTPTS,"
+            f"scale=w='trunc({out_w}*(1+{zoom_rate:.5f}*t)/2)*2':h='trunc({out_h}*(1+{zoom_rate:.5f}*t)/2)*2':eval=frame,"
+            f"crop={out_w}:{out_h}:(iw-{out_w})/2:(ih-{out_h})/2,"
+            "eq=contrast=1.08:saturation=1.12,vignette=PI/5,"
+            "fade=t=in:st=0:d=0.12:color=white,format=yuv420p"
         ),
-        "-map", "[vout]",
         "-t", f"{peak_dur:.3f}",
-        "-r", str(fps),
-        "-c:v", "libx264",
-        "-crf", "17",
-        "-preset", "veryfast",
+        "-r", f"{fps:.3f}",
+        *enc_args,
         "-an",
         str(hook_video),
-    ])
-
-    run_ffmpeg([
-        "-ss", f"{peak_rel_start:.3f}",
-        "-t", f"{peak_dur:.3f}",
-        "-i", str(reframed_main),
         "-vn",
         "-ar", "48000",
         "-ac", "2",
@@ -215,11 +245,13 @@ def _build_transition_video(
     output_path: Path,
     config: AppConfig,
 ) -> Path:
-    """Create a crisp quick whoosh/rewind flash transition into the clip's real start."""
-    fps = config.reframe.output_fps
+    """Create a crisp quick whoosh/whip flash transition into the clip's real start."""
+    main_info = extract_stream_info(probe_media(reframed_main))
+    fps = float(main_info.get("fps") or config.reframe.output_fps)
     out_w = config.reframe.output_width
     out_h = config.reframe.output_height
-    half_d = max(0.06, duration * 0.5)
+    half_d = max(0.05, duration * 0.5)
+    enc_args = _intermediate_codec_args(config)
 
     run_ffmpeg([
         "-ss", "0",
@@ -227,16 +259,14 @@ def _build_transition_video(
         "-i", str(reframed_main),
         "-vf",
         (
-            f"scale={out_w}:{out_h},fps={fps},"
+            f"scale={out_w}:{out_h},fps={fps:.3f},"
             "gblur=sigma=18:steps=2,"
             f"fade=t=out:st=0:d={half_d:.3f}:color=white,"
             f"fade=t=in:st={half_d:.3f}:d={half_d:.3f}:color=white,"
             "format=yuv420p"
         ),
         "-t", f"{duration:.3f}",
-        "-c:v", "libx264",
-        "-crf", "18",
-        "-preset", "veryfast",
+        *enc_args,
         "-an",
         str(output_path),
     ])
@@ -250,7 +280,7 @@ def _generate_publishing_metadata(
     hook_text: str,
     llm: LLMClient,
 ) -> dict:
-    """Use LLM (cached) to generate 5 titles, credited description, 8 hashtags, and pinned comment."""
+    """Generate 5 video-specific titles, post caption, credited description, topic hashtags, and comment."""
     source_credit = metadata.channel or metadata.show_name or "Original Broadcast"
     user_prompt = (
         f"Subject: {person}\n"
@@ -268,7 +298,7 @@ def _generate_publishing_metadata(
     )
     titles = list(raw.get("titles", []))[:5] if isinstance(raw, dict) else []
     while len(titles) < 5:
-        titles.append(f"{person}: {hook_text}"[:80])
+        titles.append(f"{person}: {hook_text}"[:85])
 
     desc = str(raw.get("description", "")).strip() if isinstance(raw, dict) else ""
     if source_credit.lower() not in desc.lower():
@@ -277,13 +307,17 @@ def _generate_publishing_metadata(
     hashtags = [
         h if str(h).startswith("#") else f"#{h}"
         for h in (raw.get("hashtags", []) if isinstance(raw, dict) else [])
-    ][:8]
-    defaults = ["#shorts", "#interview", "#podcast", "#quotes", "#storytime", "#mindset", "#viral", "#archive"]
+    ][:9]
+    defaults = ["#shorts", "#viral", "#podcastclips", "#interview", "#clips"]
     for d in defaults:
         if len(hashtags) >= 8:
             break
         if d not in hashtags:
             hashtags.append(d)
+
+    post_caption = str(raw.get("post_caption", "")).strip() if isinstance(raw, dict) else ""
+    if not post_caption:
+        post_caption = f"{hook_text}\n\n{candidate.key_quote[:130]}\n\n{' '.join(hashtags[:8])}"
 
     pinned = (
         str(raw.get("pinned_comment", "")).strip()
@@ -293,8 +327,9 @@ def _generate_publishing_metadata(
 
     return {
         "titles": titles,
+        "post_caption": post_caption,
         "description": desc,
-        "hashtags": hashtags[:8],
+        "hashtags": hashtags[:9],
         "pinned_comment": pinned,
     }
 
@@ -311,7 +346,7 @@ def render_single_short(
     config: AppConfig,
     detector: Optional[FaceDetector] = None,
 ) -> ClipExportMetadata:
-    """Render a raw, uninterrupted 9:16 vertical Short from [candidate.start, candidate.end] with bold animated captions."""
+    """Render crisp 9:16 Short: crux hook opener (zoom/flash + tense music + kinetic caption) -> continuous clip + mood music + bold captions."""
     clip_work = work_dir / candidate.id
     clip_work.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -323,8 +358,11 @@ def render_single_short(
     meta_json_path = output_dir / f"{base_name}_metadata.json"
     meta_txt_path = output_dir / f"{base_name}_metadata.txt"
 
-    # 1. Reframe raw continuous clip [candidate.start, candidate.end] to 1080x1920 (no stitched intro, no artificial cuts)
+    # 1. Reframe raw continuous clip [candidate.start, candidate.end] to crisp 1080x1920
+    # Simultaneously saves main_audio.wav and final_thumb.jpg during reframing with zero extra video decode passes!
     reframed_main = clip_work / "reframed_main.mp4"
+    main_audio_wav = clip_work / "main_audio.wav"
+    peak_offset_sec = max(0.0, candidate.peak_start - candidate.start)
     reframe_clip_to_vertical(
         source_video=Path(metadata.local_video_path),
         start_sec=candidate.start,
@@ -332,25 +370,89 @@ def render_single_short(
         output_video=reframed_main,
         config=config,
         detector=detector,
+        audio_output_wav=main_audio_wav,
+        thumb_output_jpg=final_thumb,
+        peak_offset_sec=peak_offset_sec,
     )
+    if not main_audio_wav.exists():
+        run_ffmpeg([
+            "-i", str(reframed_main),
+            "-vn",
+            "-ar", "48000",
+            "-ac", "2",
+            "-c:a", "pcm_s16le",
+            str(main_audio_wav),
+        ])
 
-    # 2. Extract raw clip audio and normalize cleanly to -14 LUFS (no synthetic intro SFX or drone beds)
-    main_audio_wav = clip_work / "main_audio.wav"
-    run_ffmpeg([
-        "-i", str(reframed_main),
-        "-vn",
-        "-ar", "48000",
-        "-ac", "2",
-        "-c:a", "pcm_s16le",
-        str(main_audio_wav),
-    ])
-    master_wav, measured_lufs = normalize_to_lufs(
-        input_wav=main_audio_wav,
-        output_wav=clip_work / "master_loudnorm.wav",
-        config=config,
-    )
+    mood = getattr(candidate, "mood", "tense") or "tense"
+    was_upscaled = (metadata.height * (9.0 / 16.0)) < config.reframe.output_width
+    pre_ass_filters = build_video_enhancement_filter_chain(config, was_upscaled=was_upscaled)
 
-    # 3. Generate ultra-bold, dynamically animated word-by-word ASS captions synced directly from 0.0s
+    hook_words: Optional[List[WordTimestamp]] = None
+    hook_dur = 0.0
+    trans_dur = 0.0
+    video_inputs: List[Path] = [reframed_main]
+    cleanup_paths: List[Path] = [reframed_main]
+
+    if config.hook.enabled and candidate.duration >= 5.0:
+        # 2. Build visual crux hook segment (0:00 -> ~3.0s) with zoom + flash + vignette effect
+        hook_video, hook_audio, hook_dur = _build_hook_segment(
+            reframed_main=reframed_main,
+            candidate=candidate,
+            hook_text=hook_text,
+            work_dir=clip_work,
+            config=config,
+        )
+        trans_dur = max(0.0, float(config.hook.transition_duration_sec))
+        if trans_dur > 0.02:
+            trans_video = _build_transition_video(
+                reframed_main=reframed_main,
+                duration=trans_dur,
+                output_path=clip_work / "transition_flash.mp4",
+                config=config,
+            )
+            video_inputs = [hook_video, trans_video, reframed_main]
+            cleanup_paths.extend([hook_video, trans_video])
+        else:
+            trans_dur = 0.0
+            video_inputs = [hook_video, reframed_main]
+            cleanup_paths.append(hook_video)
+
+        # 3. Assemble clean hook + main audio -> -14 LUFS
+        master_wav, measured_lufs = build_master_audio(
+            hook_audio_wav=hook_audio,
+            main_audio_wav=main_audio_wav,
+            hook_duration=hook_dur,
+            transition_duration=trans_dur,
+            closing_duration=0.0,
+            work_dir=clip_work,
+            config=config,
+            mood=mood,
+        )
+        hook_words = [
+            w for w in transcript.words if w.end >= candidate.peak_start and w.start <= candidate.peak_end
+        ]
+    else:
+        if config.audio.bg_music_enabled:
+            master_wav, measured_lufs = build_master_audio(
+                hook_audio_wav=main_audio_wav,
+                main_audio_wav=main_audio_wav,
+                hook_duration=0.2,
+                transition_duration=0.0,
+                closing_duration=0.0,
+                work_dir=clip_work,
+                config=config,
+                mood=mood,
+            )
+        else:
+            master_wav, measured_lufs = normalize_to_lufs(
+                input_wav=main_audio_wav,
+                output_wav=clip_work / "master_loudnorm.wav",
+                config=config,
+            )
+
+    # 4. Generate Iman Gadzhi / Hormozi / Documentary kinetic opening title + word-by-word animated ASS captions
+    main_offset = hook_dur + trans_dur
     clip_words: List[WordTimestamp] = [
         w for w in transcript.words if w.end >= candidate.start and w.start <= candidate.end
     ]
@@ -358,10 +460,13 @@ def render_single_short(
         output_ass=clip_work / "captions.ass",
         clip_words=clip_words,
         clip_start=candidate.start,
-        time_offset=0.0,
+        time_offset=main_offset,
         config=config,
         key_quote=candidate.key_quote,
         hook_text=hook_text,
+        hook_words=hook_words,
+        hook_start=candidate.peak_start,
+        hook_banner_duration=hook_dur,
     )
 
     escaped_ass = escape_ffmpeg_filter_path(ass_path)
@@ -370,17 +475,41 @@ def render_single_short(
     if font_path and font_path.parent.exists():
         fontsdir_arg = f":fontsdir='{escape_ffmpeg_filter_path(font_path.parent)}'"
 
-    # 4. Burn ONLY the bold animated captions onto the raw reframed 9:16 video + mastered audio
-    run_ffmpeg([
-        "-i", str(reframed_main),
-        "-i", str(master_wav),
-        "-filter_complex",
-        f"[0:v]ass=filename='{escaped_ass}'{fontsdir_arg},format=yuv420p[vfinal]",
+    # 5. Single-pass final H.264 compositing: concat (if hook) -> mirror/quality filters -> burn ASS captions
+    ff_cmd: List[str] = []
+    for vp in video_inputs:
+        ff_cmd.extend(["-i", str(vp)])
+    audio_input_idx = len(video_inputs)
+    ff_cmd.extend(["-i", str(master_wav)])
+
+    if len(video_inputs) == 1:
+        filter_complex = (
+            f"[0:v]setpts=PTS-STARTPTS{pre_ass_filters},"
+            f"ass=filename='{escaped_ass}'{fontsdir_arg},format=yuv420p[vfinal]"
+        )
+    else:
+        pts_parts = [f"[{i}:v]setpts=PTS-STARTPTS[v{i}]" for i in range(len(video_inputs))]
+        v_labels = "".join(f"[v{i}]" for i in range(len(video_inputs)))
+        filter_complex = (
+            ";".join(pts_parts)
+            + f";{v_labels}concat=n={len(video_inputs)}:v=1:a=0{pre_ass_filters},"
+            + f"ass=filename='{escaped_ass}'{fontsdir_arg},format=yuv420p[vfinal]"
+        )
+
+    ff_cmd.extend([
+        "-filter_complex", filter_complex,
         "-map", "[vfinal]",
-        "-map", "1:a:0",
+        "-map", f"{audio_input_idx}:a:0",
         "-c:v", "libx264",
+        "-profile:v", "high",
+        "-level", "4.2",
+        "-tune", "film",
         "-crf", str(config.export.video_crf),
-        "-preset", "veryfast",
+        "-preset", config.export.video_preset,
+        "-x264-params", "aq-mode=3",
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", config.export.audio_bitrate,
@@ -388,13 +517,17 @@ def render_single_short(
         "-shortest",
         str(final_mp4),
     ])
+    run_ffmpeg(ff_cmd)
 
-    _extract_best_vertical_thumbnail(
-        reframed_video=reframed_main,
-        output_jpg=final_thumb,
-        peak_offset_sec=max(0.0, candidate.peak_start - candidate.start),
-        detector=detector,
-    )
+    if not final_thumb.exists():
+        _extract_best_vertical_thumbnail(
+            reframed_video=reframed_main,
+            output_jpg=final_thumb,
+            peak_offset_sec=peak_offset_sec,
+            detector=detector,
+        )
+    for tmp_p in cleanup_paths:
+        tmp_p.unlink(missing_ok=True)
 
     pub = _generate_publishing_metadata(candidate, metadata, person, hook_text, llm)
     export_meta = ClipExportMetadata(
@@ -402,10 +535,12 @@ def render_single_short(
         output_video=final_mp4.name,
         thumbnail=final_thumb.name,
         titles=pub["titles"],
+        post_caption=pub["post_caption"],
         description=pub["description"],
         hashtags=pub["hashtags"],
         pinned_comment=pub["pinned_comment"],
         hook_text=hook_text,
+        mood=mood,
         start=candidate.start,
         end=candidate.end,
         score=candidate.score,
@@ -414,7 +549,7 @@ def render_single_short(
     meta_json_path.write_text(export_meta.model_dump_json(indent=2), encoding="utf-8")
 
     txt_lines = [
-        f"CLIP: {candidate.id} ({candidate.start:.2f}s - {candidate.end:.2f}s) | Score: {candidate.score}/100",
+        f"CLIP: {candidate.id} ({candidate.start:.2f}s - {candidate.end:.2f}s) | Score: {candidate.score}/100 | Mood: {mood.upper()}",
         f"VIDEO: {final_mp4.name}",
         f"THUMBNAIL: {final_thumb.name}",
         f"MEASURED LOUDNESS: {measured_lufs if measured_lufs is not None else 'N/A'} LUFS",
@@ -422,6 +557,9 @@ def render_single_short(
         "",
         "TITLE OPTIONS:",
         *[f"  {i}. {t}" for i, t in enumerate(export_meta.titles, start=1)],
+        "",
+        "READY-TO-POST SOCIAL CAPTION:",
+        export_meta.post_caption,
         "",
         "DESCRIPTION:",
         export_meta.description,

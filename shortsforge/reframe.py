@@ -10,7 +10,13 @@ import cv2
 import numpy as np
 
 from shortsforge.config import AppConfig
-from shortsforge.ffmpeg_utils import FFmpegExecutionError, get_ffmpeg_bin, run_ffmpeg
+from shortsforge.ffmpeg_utils import (
+    FFmpegExecutionError,
+    extract_stream_info,
+    get_ffmpeg_bin,
+    probe_media,
+    run_ffmpeg,
+)
 from shortsforge.quality_check import FaceBox, FaceDetector
 
 
@@ -91,7 +97,10 @@ def _crop_around_center(
     x0 = max(0, min(src_w - cw, x0))
     y0 = max(0, min(src_h - ch, y0))
     patch = frame_bgr[y0 : y0 + ch, x0 : x0 + cw]
-    return cv2.resize(patch, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
+    if cw == out_w and ch == out_h:
+        return np.ascontiguousarray(patch)
+    interp = cv2.INTER_AREA if cw > out_w else cv2.INTER_CUBIC
+    return cv2.resize(patch, (out_w, out_h), interpolation=interp)
 
 
 def _render_two_person_split(
@@ -141,32 +150,41 @@ def reframe_clip_to_vertical(
     output_video: Path,
     config: AppConfig,
     detector: FaceDetector | None = None,
+    audio_output_wav: Path | None = None,
+    thumb_output_jpg: Path | None = None,
+    peak_offset_sec: float = 0.0,
 ) -> Path:
-    """Extract [start_sec, end_sec], reframe to 1080x1920 with smooth face tracking, and optionally denoise."""
+    """Decode [start_sec, end_sec] losslessly via pipe, smoothly track speaker face to 1080x1920, and write crisp high-bitrate MP4."""
     output_video.parent.mkdir(parents=True, exist_ok=True)
-    work_segment = output_video.with_name(f"{output_video.stem}_raw_slice.mp4")
-
-    out_fps = config.reframe.output_fps
+    audio_slice_wav = audio_output_wav or output_video.with_name(f"{output_video.stem}_audio_slice.wav")
+    audio_slice_wav.parent.mkdir(parents=True, exist_ok=True)
     slice_dur = max(0.5, end_sec - start_sec)
+
+    # Probe exact source dimensions & native FPS without lossy intermediate MP4 re-encode
+    info = extract_stream_info(probe_media(source_video))
+    src_w = max(2, int(info["width"]))
+    src_h = max(2, int(info["height"]))
+    src_fps = float(info.get("fps") or 30.0)
+    out_fps_val = (
+        round(min(60.0, max(23.976, src_fps)), 3)
+        if getattr(config.reframe, "preserve_source_fps", True)
+        else float(config.reframe.output_fps)
+    )
+    out_fps = max(24, int(round(out_fps_val)))
+    src_ar = src_w / max(1, src_h)
+    total_frames = max(1, int(round(slice_dur * out_fps_val)))
+
+    # Extract raw uncompressed audio slice cleanly (reused by render_single_short if audio_output_wav is set)
     run_ffmpeg([
         "-ss", f"{start_sec:.3f}",
         "-i", str(source_video),
         "-t", f"{slice_dur:.3f}",
-        "-r", str(out_fps),
-        "-c:v", "libx264",
-        "-crf", "17",
-        "-preset", "ultrafast",
-        "-c:a", "pcm_s16le",
+        "-vn",
         "-ar", "48000",
         "-ac", "2",
-        str(work_segment),
+        "-c:a", "pcm_s16le",
+        str(audio_slice_wav),
     ])
-
-    cap = cv2.VideoCapture(str(work_segment))
-    src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total_frames = max(1, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))
-    src_ar = src_w / max(1, src_h)
 
     out_w = config.reframe.output_width
     out_h = config.reframe.output_height
@@ -181,34 +199,58 @@ def reframe_clip_to_vertical(
         vf_chain.append("hqdn3d=1.5:1.5:4:4")
         vf_chain.append(f"scale={out_w}:{out_h}:flags=lanczos")
         vf_chain.append("unsharp=5:5:0.45:5:5:0.0")
+    vf_chain.append("format=yuv420p")
 
-    ff_cmd = [
+    # Decode raw lossless BGR frames directly from source (zero ultrafast compression artifacts!)
+    dec_cmd = [
+        get_ffmpeg_bin(),
+        "-hide_banner",
+        "-loglevel", "error",
+        "-ss", f"{start_sec:.3f}",
+        "-i", str(source_video),
+        "-t", f"{slice_dur:.3f}",
+        "-r", f"{out_fps_val}",
+        "-an",
+        "-f", "rawvideo",
+        "-pix_fmt", "bgr24",
+        "pipe:1",
+    ]
+    dec_proc = subprocess.Popen(
+        dec_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    is_lossless = getattr(config.export, "lossless_intermediates", True)
+    enc_quality_args = (
+        ["-c:v", "libx264", "-qp", "0", "-preset", "ultrafast", "-g", "30"]
+        if is_lossless
+        else ["-c:v", "libx264", "-profile:v", "high", "-crf", "12", "-preset", "ultrafast", "-g", "30"]
+    )
+    enc_cmd = [
         get_ffmpeg_bin(),
         "-hide_banner",
         "-y",
         "-f", "rawvideo",
         "-pix_fmt", "bgr24",
         "-s", f"{out_w}x{out_h}",
-        "-r", str(out_fps),
+        "-r", f"{out_fps_val}",
         "-i", "pipe:0",
-        "-i", str(work_segment),
+        "-i", str(audio_slice_wav),
         "-map", "0:v:0",
         "-map", "1:a:0",
-    ]
-    if vf_chain:
-        ff_cmd.extend(["-vf", ",".join(vf_chain)])
-    ff_cmd.extend([
-        "-c:v", "libx264",
+        "-vf", ",".join(vf_chain),
+        *enc_quality_args,
         "-pix_fmt", "yuv420p",
-        "-crf", "17",
-        "-preset", "veryfast",
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
         "-c:a", "pcm_s16le",
         "-shortest",
         str(reframed_tmp),
-    ])
-
+    ]
     proc = subprocess.Popen(
-        ff_cmd,
+        enc_cmd,
         stdin=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -225,20 +267,38 @@ def reframe_clip_to_vertical(
     max_step_px = (config.reframe.max_pan_speed_px_per_sec * 0.65) / max(1, out_fps)
     alpha = min(0.08, config.reframe.face_smoothing_alpha)
 
-    detect_stride = max(1, out_fps // 5)  # Smooth 5Hz face sampling with zero abrupt mid-clip cuts
+    base_stride = max(1, out_fps // 5)
+    calm_stride = max(base_stride, out_fps // 3)
+    detect_stride = base_stride
+    stationary_count = 0
     last_faces: List[FaceBox] = []
+    frame_bytes = src_w * src_h * 3
+
+    best_thumb_score = -1.0
+    best_thumb_frame: np.ndarray | None = None
+    thumb_stride = max(1, out_fps // 2)
 
     frame_idx = 0
     try:
+        assert dec_proc.stdout is not None
         assert proc.stdin is not None
         while True:
-            ok, frame = cap.read()
-            if not ok or frame is None:
+            raw_buf = dec_proc.stdout.read(frame_bytes)
+            if len(raw_buf) < frame_bytes:
                 break
+            frame = np.frombuffer(raw_buf, dtype=np.uint8).reshape((src_h, src_w, 3))
 
             if frame_idx % detect_stride == 0:
                 detected = face_det.detect(frame)
                 if detected:
+                    primary_det = max(detected, key=lambda b: b.area)
+                    if initialized_cam and abs(primary_det.cx - cam_x) <= deadzone_px:
+                        stationary_count += 1
+                        if stationary_count >= 3:
+                            detect_stride = calm_stride
+                    else:
+                        stationary_count = 0
+                        detect_stride = base_stride
                     last_faces = detected
 
             if is_four_by_three:
@@ -246,7 +306,6 @@ def reframe_clip_to_vertical(
                 zoom_now = 1.0 + (config.reframe.four_by_three_zoom - 1.0) * prog
                 out_frame = _render_blurred_fit(frame, out_w, out_h, zoom=zoom_now)
             else:
-                # Continuous, uninterrupted single-camera 9:16 framing (no mid-clip layout jumps or artificial cuts)
                 if last_faces:
                     primary = max(last_faces, key=lambda b: b.area)
                     target_x, target_y = primary.cx, primary.cy
@@ -259,19 +318,45 @@ def reframe_clip_to_vertical(
 
                 out_frame = _crop_around_center(frame, cam_x, cam_y, crop_w, crop_h, out_w, out_h)
 
+            if thumb_output_jpg is not None and (frame_idx % thumb_stride == 0):
+                cur_t = frame_idx / max(1.0, out_fps_val)
+                small_gray = cv2.cvtColor(
+                    cv2.resize(out_frame, (270, 480), interpolation=cv2.INTER_AREA),
+                    cv2.COLOR_BGR2GRAY,
+                )
+                sharpness = float(cv2.Laplacian(small_gray, cv2.CV_64F).var())
+                face_bonus = sum(f.area for f in last_faces) / max(1.0, src_w * src_h) * 1800.0
+                peak_bonus = 200.0 if abs(cur_t - peak_offset_sec) <= 1.8 else 0.0
+                t_score = sharpness + face_bonus + peak_bonus
+                if t_score > best_thumb_score:
+                    best_thumb_score = t_score
+                    best_thumb_frame = out_frame.copy()
+
             proc.stdin.write(out_frame.tobytes())
             frame_idx += 1
 
+        dec_err = dec_proc.stderr.read().decode("utf-8", errors="replace") if dec_proc.stderr else ""
+        dec_ret = dec_proc.wait()
         proc.stdin.close()
         stderr_out = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
         ret = proc.wait()
+        if dec_ret != 0 and frame_idx == 0:
+            raise FFmpegExecutionError(f"Reframe decode failed (exit {dec_ret}):\n{dec_err[-1200:]}")
         if ret != 0:
             raise FFmpegExecutionError(f"Reframe ffmpeg pipe failed (exit {ret}):\n{stderr_out[-1200:]}")
     finally:
-        cap.release()
+        if dec_proc.poll() is None:
+            dec_proc.kill()
         if own_detector:
             face_det.close()
-        work_segment.unlink(missing_ok=True)
+        if audio_output_wav is None:
+            audio_slice_wav.unlink(missing_ok=True)
+
+    if thumb_output_jpg is not None and best_thumb_frame is not None:
+        thumb_output_jpg.parent.mkdir(parents=True, exist_ok=True)
+        if getattr(config.export, "mirror_video", False):
+            best_thumb_frame = cv2.flip(best_thumb_frame, 1)
+        cv2.imwrite(str(thumb_output_jpg), best_thumb_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
 
     reframed_tmp.replace(output_video)
     return output_video

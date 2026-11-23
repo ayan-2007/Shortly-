@@ -66,7 +66,9 @@ def run_new_project(
 ) -> Path:
     """Execute Stages 1-4 (Ingest -> Transcribe -> Moments + Quality Gate -> Verified Hooks) & build review.html."""
     if max_clips is not None:
-        config.moments.max_candidates = max(1, max_clips)
+        config.moments.max_candidates = 15 if max_clips <= 0 else max(1, min(15, max_clips))
+    else:
+        config.moments.max_candidates = max(1, min(15, config.moments.max_candidates or 15))
     if min_score is not None:
         config.review.auto_score_threshold = min_score
     deceased_flag = deceased or config.hook.deceased_subject
@@ -153,7 +155,8 @@ def run_new_project(
         else:
             t_mom = progress.add_task("3/4 Finding best moments & checking video/audio quality...", total=2)
             if on_progress:
-                on_progress(f"[3/4] Finding up to {config.moments.max_candidates} best viral moments...")
+                cap_val = max(1, min(15, config.moments.max_candidates or 15))
+                on_progress(f"[3/4] Finding up to {cap_val} high-impact viral moments (quality over quantity)...")
             candidates = find_best_moments(
                 transcript=transcript,
                 metadata=metadata,
@@ -288,6 +291,8 @@ def run_render_project(
     min_score: Optional[int] = None,
     force: bool = False,
     on_progress: Optional[Callable[[str], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+    max_render: Optional[int] = None,
 ) -> List[ClipExportMetadata]:
     """Execute Stages 5-9 for all approved clips in a project and write outputs/<name>/."""
     if min_score is not None:
@@ -333,6 +338,9 @@ def run_render_project(
         top_c = max(candidates, key=lambda x: x.score)
         approved_pairs.append((top_c, top_c.hooks.active_hook_text() if top_c.hooks else top_c.key_quote[:60]))
 
+    cap_n = 15 if (max_render is None or max_render <= 0) else max(1, min(15, max_render))
+    approved_pairs = approved_pairs[:cap_n]
+
     if not approved_pairs:
         console.print("[yellow]No approved clips to render.[/yellow]")
         write_sources_and_warnings(workspace.output_dir, metadata, state.person, [], state.warnings, config)
@@ -355,6 +363,10 @@ def run_render_project(
                 total=len(approved_pairs),
             )
             for idx_r, (cand, hook_text) in enumerate(approved_pairs, start=1):
+                if should_cancel and should_cancel():
+                    if on_progress:
+                        on_progress(f"Stopped by user cleanly after rendering {len(exported)} Short(s).")
+                    break
                 existing_meta = None
                 if not force and cand.id in state.rendered_clips:
                     matches = sorted(workspace.output_dir.glob(f"{cand.id}_*_metadata.json"))
@@ -396,6 +408,7 @@ def run_render_project(
                 if cand.id not in state.rendered_clips:
                     state.rendered_clips.append(cand.id)
                 workspace.save_state(state)
+                write_sources_and_warnings(workspace.output_dir, metadata, state.person, exported, state.warnings, config)
                 progress.advance(task)
     finally:
         detector.close()
@@ -418,14 +431,19 @@ def run_render_project(
 def run_autopilot_from_source(
     source: str,
     config: AppConfig,
-    max_clips: int = 3,
+    max_clips: int = 15,
     force: bool = False,
     on_progress: Optional[Callable[[str], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+    on_project_detected: Optional[Callable[[str], None]] = None,
 ) -> Tuple[str, List[ClipExportMetadata]]:
-    """One-click autopilot: given ONLY a URL or file path, auto-detects project/person, finds clips, and renders Shorts."""
+    """One-click autopilot: given ONLY a URL or file path, auto-detects project/person, finds clips (15 max), and renders Shorts."""
+    capped = 15 if (max_clips is None or max_clips <= 0) else max(1, min(15, max_clips))
     if on_progress:
         on_progress("Analyzing link to auto-detect speaker, show & project...")
     project_name, person, show_name, year = auto_detect_project_and_person(source, config)
+    if on_project_detected:
+        on_project_detected(project_name)
     if on_progress:
         on_progress(f"Detected Subject: {person} | Show: {show_name or 'Interview'} | Project: {project_name}")
 
@@ -436,7 +454,7 @@ def run_autopilot_from_source(
         config=config,
         auto=True,
         serve=False,
-        max_clips=max_clips,
+        max_clips=capped,
         show_override=show_name,
         year_override=year,
         force=force,
@@ -448,5 +466,7 @@ def run_autopilot_from_source(
         auto=True,
         force=force,
         on_progress=on_progress,
+        should_cancel=should_cancel,
+        max_render=capped,
     )
     return project_name, exported
