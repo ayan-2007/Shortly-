@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -350,70 +353,108 @@ def run_render_project(
 
     llm = LLMClient(config=config, workspace=workspace)
     exported: List[ClipExportMetadata] = []
-    detector = FaceDetector()
+    state_lock = threading.Lock()
 
-    try:
-        with Progress(
-            SpinnerColumn("line"),
-            TextColumn("[bold magenta]{task.description}"),
-            BarColumn(),
-            TimeElapsedColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task(
-                f"Rendering {len(approved_pairs)} vertical Short(s)...",
-                total=len(approved_pairs),
+    cfg_workers = int(getattr(config.export, "render_workers", 0) or 0)
+    auto_workers = min(3, max(1, (os.cpu_count() or 4) // 4))
+    max_workers = max(1, min(4, cfg_workers if cfg_workers > 0 else auto_workers))
+
+    # Separate already-cached clips from clips that need rendering
+    pending_items: List[Tuple[int, ClipCandidate, str]] = []
+    for idx_r, (cand, hook_text) in enumerate(approved_pairs, start=1):
+        existing_meta = None
+        if not force and cand.id in state.rendered_clips:
+            matches = sorted(workspace.output_dir.glob(f"{cand.id}_*_metadata.json"))
+            if matches:
+                try:
+                    parsed = ClipExportMetadata.model_validate_json(matches[0].read_text(encoding="utf-8"))
+                    if (workspace.output_dir / parsed.output_video).exists():
+                        existing_meta = parsed
+                except Exception:  # noqa: BLE001
+                    existing_meta = None
+        if existing_meta is not None:
+            exported.append(existing_meta)
+            if on_progress:
+                on_progress(f"Reused cached rendered Short for {cand.id} ({idx_r}/{len(approved_pairs)}).")
+        else:
+            pending_items.append((idx_r, cand, hook_text))
+
+    workers = min(max_workers, max(1, len(pending_items)))
+    if pending_items and on_progress and workers > 1:
+        on_progress(f"Turbo render: encoding {len(pending_items)} Short(s) across {workers} parallel workers (single-pass + GPU acceleration)...")
+
+    def _render_worker(item: Tuple[int, ClipCandidate, str]) -> Optional[ClipExportMetadata]:
+        idx_r, cand, hook_text = item
+        if should_cancel and should_cancel():
+            return None
+        if on_progress:
+            on_progress(
+                f"Rendering Short {idx_r}/{len(approved_pairs)} ({cand.id}, {cand.duration:.0f}s): "
+                "single-pass 9:16 crop -> neon purple captions -> -14 LUFS..."
             )
-            for idx_r, (cand, hook_text) in enumerate(approved_pairs, start=1):
+        local_det = FaceDetector()
+        try:
+            return render_single_short(
+                candidate=cand,
+                hook_text=hook_text,
+                metadata=metadata,
+                transcript=transcript,
+                person=state.person,
+                work_dir=workspace.work_dir,
+                output_dir=workspace.output_dir,
+                llm=llm,
+                config=config,
+                detector=local_det,
+            )
+        finally:
+            local_det.close()
+
+    with Progress(
+        SpinnerColumn("line"),
+        TextColumn("[bold magenta]{task.description}"),
+        BarColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(
+            f"Rendering {len(approved_pairs)} vertical Short(s) ({workers}x parallel)...",
+            total=len(approved_pairs),
+            completed=len(exported),
+        )
+        if workers <= 1:
+            for item in pending_items:
                 if should_cancel and should_cancel():
                     if on_progress:
                         on_progress(f"Stopped by user cleanly after rendering {len(exported)} Short(s).")
                     break
-                existing_meta = None
-                if not force and cand.id in state.rendered_clips:
-                    matches = sorted(workspace.output_dir.glob(f"{cand.id}_*_metadata.json"))
-                    if matches:
-                        try:
-                            parsed = ClipExportMetadata.model_validate_json(matches[0].read_text(encoding="utf-8"))
-                            if (workspace.output_dir / parsed.output_video).exists():
-                                existing_meta = parsed
-                        except Exception:  # noqa: BLE001
-                            existing_meta = None
-
-                if existing_meta is not None:
-                    progress.update(task, description=f"Skipping cached {cand.id} (already rendered)...")
-                    if on_progress:
-                        on_progress(f"Reused cached rendered Short for {cand.id} ({idx_r}/{len(approved_pairs)}).")
-                    exported.append(existing_meta)
-                    progress.advance(task)
-                    continue
-
-                progress.update(task, description=f"Rendering {cand.id} ({cand.duration:.0f}s)...")
-                if on_progress:
-                    on_progress(
-                        f"Rendering Short {idx_r}/{len(approved_pairs)} ({cand.id}, {cand.duration:.0f}s): "
-                        "9:16 face-tracking -> bold animated captions -> -14 LUFS..."
-                    )
-                meta_out = render_single_short(
-                    candidate=cand,
-                    hook_text=hook_text,
-                    metadata=metadata,
-                    transcript=transcript,
-                    person=state.person,
-                    work_dir=workspace.work_dir,
-                    output_dir=workspace.output_dir,
-                    llm=llm,
-                    config=config,
-                    detector=detector,
-                )
-                exported.append(meta_out)
-                if cand.id not in state.rendered_clips:
-                    state.rendered_clips.append(cand.id)
-                workspace.save_state(state)
-                write_sources_and_warnings(workspace.output_dir, metadata, state.person, exported, state.warnings, config)
+                progress.update(task, description=f"Rendering {item[1].id} ({item[1].duration:.0f}s)...")
+                meta_out = _render_worker(item)
+                if meta_out is not None:
+                    exported.append(meta_out)
+                    if item[1].id not in state.rendered_clips:
+                        state.rendered_clips.append(item[1].id)
+                    workspace.save_state(state)
+                    write_sources_and_warnings(workspace.output_dir, metadata, state.person, exported, state.warnings, config)
                 progress.advance(task)
-    finally:
-        detector.close()
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                future_map = {pool.submit(_render_worker, item): item for item in pending_items}
+                for fut in as_completed(future_map):
+                    item = future_map[fut]
+                    meta_out = fut.result()
+                    if meta_out is not None:
+                        with state_lock:
+                            exported.append(meta_out)
+                            if item[1].id not in state.rendered_clips:
+                                state.rendered_clips.append(item[1].id)
+                            exported.sort(key=lambda m: m.clip_id)
+                            workspace.save_state(state)
+                            write_sources_and_warnings(workspace.output_dir, metadata, state.person, exported, state.warnings, config)
+                            if on_progress:
+                                on_progress(f"Finished {item[1].id} ({len(exported)}/{len(approved_pairs)} Shorts ready)")
+                    progress.advance(task)
+
+    exported.sort(key=lambda m: m.clip_id)
 
     sources_path, warnings_path = write_sources_and_warnings(
         output_dir=workspace.output_dir,

@@ -149,8 +149,10 @@ class ReviewConfig(BaseModel):
 
 
 class ExportConfig(BaseModel):
-    video_crf: int = 16
-    video_preset: str = "fast"
+    video_crf: int = 18
+    video_preset: str = "veryfast"
+    hw_accel: bool = True
+    render_workers: int = 0  # 0 = auto (up to 3 parallel clip workers based on CPU cores)
     sharpen_strength: float = 0.22
     mirror_video: bool = False
     video_filters: List[str] = Field(default_factory=list)

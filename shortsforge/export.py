@@ -12,8 +12,10 @@ from shortsforge.audio import build_master_audio, normalize_to_lufs
 from shortsforge.captions import write_ass_captions
 from shortsforge.config import AppConfig, resolve_font
 from shortsforge.ffmpeg_utils import (
+    FFmpegExecutionError,
     escape_ffmpeg_filter_path,
     extract_stream_info,
+    get_h264_encode_args,
     probe_media,
     run_ffmpeg,
 )
@@ -26,7 +28,7 @@ from shortsforge.models import (
     WordTimestamp,
 )
 from shortsforge.quality_check import FaceDetector
-from shortsforge.reframe import reframe_clip_to_vertical
+from shortsforge.reframe import build_native_reframe_filter, reframe_clip_to_vertical
 from shortsforge.tts import synthesize_narrator
 
 
@@ -358,44 +360,190 @@ def render_single_short(
     meta_json_path = output_dir / f"{base_name}_metadata.json"
     meta_txt_path = output_dir / f"{base_name}_metadata.txt"
 
-    # 1. Reframe raw continuous clip [candidate.start, candidate.end] to crisp 1080x1920
-    # Simultaneously saves main_audio.wav and final_thumb.jpg during reframing with zero extra video decode passes!
-    reframed_main = clip_work / "reframed_main.mp4"
+    source_path = Path(metadata.local_video_path)
     main_audio_wav = clip_work / "main_audio.wav"
     peak_offset_sec = max(0.0, candidate.peak_start - candidate.start)
-    reframe_clip_to_vertical(
-        source_video=Path(metadata.local_video_path),
-        start_sec=candidate.start,
-        end_sec=candidate.end,
-        output_video=reframed_main,
-        config=config,
-        detector=detector,
-        audio_output_wav=main_audio_wav,
-        thumb_output_jpg=final_thumb,
-        peak_offset_sec=peak_offset_sec,
+    slice_dur = max(0.5, candidate.end - candidate.start)
+
+    mood = getattr(candidate, "mood", "tense") or "tense"
+    was_upscaled = (metadata.height * (9.0 / 16.0)) < config.reframe.output_width
+    pre_ass_filters = build_video_enhancement_filter_chain(config, was_upscaled=was_upscaled)
+
+    use_direct_fast_path = not (config.hook.enabled and candidate.duration >= 5.0)
+    cleanup_paths: List[Path] = []
+    hook_words: Optional[List[WordTimestamp]] = None
+    hook_dur = 0.0
+    trans_dur = 0.0
+
+    enc_name, v_enc_args, filter_pix_fmt = get_h264_encode_args(
+        crf=config.export.video_crf,
+        preset=config.export.video_preset,
+        hw_accel=getattr(config.export, "hw_accel", True),
     )
-    if not main_audio_wav.exists():
+
+    def _run_encode_with_hw_fallback(
+        input_args: List[str],
+        fc_template: str,
+        audio_idx: int,
+        extra_out_args: Optional[List[str]] = None,
+    ) -> None:
+        extra = extra_out_args or []
+        cmd = [
+            *input_args,
+            "-filter_complex", fc_template.format(pix_fmt=filter_pix_fmt),
+            "-map", "[vfinal]",
+            "-map", f"{audio_idx}:a:0",
+            *v_enc_args,
+            *extra,
+            "-colorspace", "bt709",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
+            "-c:a", "aac",
+            "-b:a", config.export.audio_bitrate,
+            "-movflags", "+faststart",
+            "-shortest",
+            str(final_mp4),
+        ]
+        try:
+            run_ffmpeg(cmd)
+        except FFmpegExecutionError:
+            if enc_name == "libx264":
+                raise
+            # Seamless fallback to software libx264 if hardware encoder rejects a stream
+            _, sw_args, sw_pix = get_h264_encode_args(
+                crf=config.export.video_crf,
+                preset=config.export.video_preset,
+                hw_accel=False,
+            )
+            sw_cmd = [
+                *input_args,
+                "-filter_complex", fc_template.format(pix_fmt=sw_pix),
+                "-map", "[vfinal]",
+                "-map", f"{audio_idx}:a:0",
+                *sw_args,
+                *extra,
+                "-colorspace", "bt709",
+                "-color_primaries", "bt709",
+                "-color_trc", "bt709",
+                "-c:a", "aac",
+                "-b:a", config.export.audio_bitrate,
+                "-movflags", "+faststart",
+                "-shortest",
+                str(final_mp4),
+            ]
+            run_ffmpeg(sw_cmd)
+
+    if use_direct_fast_path:
+        # FAST SINGLE-PASS PATH: Zero intermediate MP4, zero 4K Python pixel piping, native FFmpeg face-tracked crop + GPU H.264!
         run_ffmpeg([
-            "-i", str(reframed_main),
+            "-ss", f"{candidate.start:.3f}",
+            "-i", str(source_path),
+            "-t", f"{slice_dur:.3f}",
             "-vn",
             "-ar", "48000",
             "-ac", "2",
             "-c:a", "pcm_s16le",
             str(main_audio_wav),
         ])
+        if config.audio.bg_music_enabled:
+            master_wav, measured_lufs = build_master_audio(
+                hook_audio_wav=main_audio_wav,
+                main_audio_wav=main_audio_wav,
+                hook_duration=0.2,
+                transition_duration=0.0,
+                closing_duration=0.0,
+                work_dir=clip_work,
+                config=config,
+                mood=mood,
+            )
+        else:
+            master_wav, measured_lufs = normalize_to_lufs(
+                input_wav=main_audio_wav,
+                output_wav=clip_work / "master_loudnorm.wav",
+                config=config,
+            )
 
-    mood = getattr(candidate, "mood", "tense") or "tense"
-    was_upscaled = (metadata.height * (9.0 / 16.0)) < config.reframe.output_width
-    pre_ass_filters = build_video_enhancement_filter_chain(config, was_upscaled=was_upscaled)
+        reframe_filter, out_fps_val, _ = build_native_reframe_filter(
+            source_video=source_path,
+            start_sec=candidate.start,
+            end_sec=candidate.end,
+            config=config,
+            detector=detector,
+            thumb_output_jpg=final_thumb,
+            peak_offset_sec=peak_offset_sec,
+        )
 
-    hook_words: Optional[List[WordTimestamp]] = None
-    hook_dur = 0.0
-    trans_dur = 0.0
-    video_inputs: List[Path] = [reframed_main]
-    cleanup_paths: List[Path] = [reframed_main]
+        clip_words: List[WordTimestamp] = [
+            w for w in transcript.words if w.end >= candidate.start and w.start <= candidate.end
+        ]
+        ass_path = write_ass_captions(
+            output_ass=clip_work / "captions.ass",
+            clip_words=clip_words,
+            clip_start=candidate.start,
+            time_offset=0.0,
+            config=config,
+            key_quote=candidate.key_quote,
+            hook_text=hook_text,
+            hook_words=None,
+            hook_start=candidate.peak_start,
+            hook_banner_duration=0.0,
+        )
+        escaped_ass = escape_ffmpeg_filter_path(ass_path)
+        font_path, _ = resolve_font(config, bold=True, preferred_name=config.captions.font_name)
+        fontsdir_arg = ""
+        if font_path and font_path.parent.exists():
+            fontsdir_arg = f":fontsdir='{escape_ffmpeg_filter_path(font_path.parent)}'"
 
-    if config.hook.enabled and candidate.duration >= 5.0:
-        # 2. Build visual crux hook segment (0:00 -> ~3.0s) with zoom + flash + vignette effect
+        if ";" in reframe_filter:
+            fc_template = (
+                f"[0:v]setpts=PTS-STARTPTS,{reframe_filter}{pre_ass_filters},"
+                f"ass=filename='{escaped_ass}'{fontsdir_arg},format={{pix_fmt}}[vfinal]"
+            )
+        else:
+            fc_template = (
+                f"[0:v]setpts=PTS-STARTPTS,{reframe_filter}{pre_ass_filters},"
+                f"ass=filename='{escaped_ass}'{fontsdir_arg},format={{pix_fmt}}[vfinal]"
+            )
+
+        input_args = [
+            "-hwaccel", "auto",
+            "-ss", f"{candidate.start:.3f}",
+            "-i", str(source_path),
+            "-t", f"{slice_dur:.3f}",
+            "-i", str(master_wav),
+        ]
+        _run_encode_with_hw_fallback(
+            input_args=input_args,
+            fc_template=fc_template,
+            audio_idx=1,
+            extra_out_args=["-r", f"{out_fps_val}"],
+        )
+        cleanup_paths.extend([main_audio_wav, master_wav])
+    else:
+        # Hook-enabled path: reframe clip, build cold-open hook segment, then single-pass composite with GPU H.264
+        reframed_main = clip_work / "reframed_main.mp4"
+        reframe_clip_to_vertical(
+            source_video=source_path,
+            start_sec=candidate.start,
+            end_sec=candidate.end,
+            output_video=reframed_main,
+            config=config,
+            detector=detector,
+            audio_output_wav=main_audio_wav,
+            thumb_output_jpg=final_thumb,
+            peak_offset_sec=peak_offset_sec,
+        )
+        if not main_audio_wav.exists():
+            run_ffmpeg([
+                "-i", str(reframed_main),
+                "-vn",
+                "-ar", "48000",
+                "-ac", "2",
+                "-c:a", "pcm_s16le",
+                str(main_audio_wav),
+            ])
+
+        cleanup_paths.append(reframed_main)
         hook_video, hook_audio, hook_dur = _build_hook_segment(
             reframed_main=reframed_main,
             candidate=candidate,
@@ -418,7 +566,6 @@ def render_single_short(
             video_inputs = [hook_video, reframed_main]
             cleanup_paths.append(hook_video)
 
-        # 3. Assemble clean hook + main audio -> -14 LUFS
         master_wav, measured_lufs = build_master_audio(
             hook_audio_wav=hook_audio,
             main_audio_wav=main_audio_wav,
@@ -432,100 +579,69 @@ def render_single_short(
         hook_words = [
             w for w in transcript.words if w.end >= candidate.peak_start and w.start <= candidate.peak_end
         ]
-    else:
-        if config.audio.bg_music_enabled:
-            master_wav, measured_lufs = build_master_audio(
-                hook_audio_wav=main_audio_wav,
-                main_audio_wav=main_audio_wav,
-                hook_duration=0.2,
-                transition_duration=0.0,
-                closing_duration=0.0,
-                work_dir=clip_work,
-                config=config,
-                mood=mood,
-            )
-        else:
-            master_wav, measured_lufs = normalize_to_lufs(
-                input_wav=main_audio_wav,
-                output_wav=clip_work / "master_loudnorm.wav",
-                config=config,
-            )
 
-    # 4. Generate Iman Gadzhi / Hormozi / Documentary kinetic opening title + word-by-word animated ASS captions
-    main_offset = hook_dur + trans_dur
-    clip_words: List[WordTimestamp] = [
-        w for w in transcript.words if w.end >= candidate.start and w.start <= candidate.end
-    ]
-    ass_path = write_ass_captions(
-        output_ass=clip_work / "captions.ass",
-        clip_words=clip_words,
-        clip_start=candidate.start,
-        time_offset=main_offset,
-        config=config,
-        key_quote=candidate.key_quote,
-        hook_text=hook_text,
-        hook_words=hook_words,
-        hook_start=candidate.peak_start,
-        hook_banner_duration=hook_dur,
-    )
-
-    escaped_ass = escape_ffmpeg_filter_path(ass_path)
-    font_path, _ = resolve_font(config, bold=True, preferred_name=config.captions.font_name)
-    fontsdir_arg = ""
-    if font_path and font_path.parent.exists():
-        fontsdir_arg = f":fontsdir='{escape_ffmpeg_filter_path(font_path.parent)}'"
-
-    # 5. Single-pass final H.264 compositing: concat (if hook) -> mirror/quality filters -> burn ASS captions
-    ff_cmd: List[str] = []
-    for vp in video_inputs:
-        ff_cmd.extend(["-i", str(vp)])
-    audio_input_idx = len(video_inputs)
-    ff_cmd.extend(["-i", str(master_wav)])
-
-    if len(video_inputs) == 1:
-        filter_complex = (
-            f"[0:v]setpts=PTS-STARTPTS{pre_ass_filters},"
-            f"ass=filename='{escaped_ass}'{fontsdir_arg},format=yuv420p[vfinal]"
+        main_offset = hook_dur + trans_dur
+        clip_words = [
+            w for w in transcript.words if w.end >= candidate.start and w.start <= candidate.end
+        ]
+        ass_path = write_ass_captions(
+            output_ass=clip_work / "captions.ass",
+            clip_words=clip_words,
+            clip_start=candidate.start,
+            time_offset=main_offset,
+            config=config,
+            key_quote=candidate.key_quote,
+            hook_text=hook_text,
+            hook_words=hook_words,
+            hook_start=candidate.peak_start,
+            hook_banner_duration=hook_dur,
         )
-    else:
+
+        escaped_ass = escape_ffmpeg_filter_path(ass_path)
+        font_path, _ = resolve_font(config, bold=True, preferred_name=config.captions.font_name)
+        fontsdir_arg = ""
+        if font_path and font_path.parent.exists():
+            fontsdir_arg = f":fontsdir='{escape_ffmpeg_filter_path(font_path.parent)}'"
+
+        input_args = []
+        for vp in video_inputs:
+            input_args.extend(["-i", str(vp)])
+        audio_input_idx = len(video_inputs)
+        input_args.extend(["-i", str(master_wav)])
+
         pts_parts = [f"[{i}:v]setpts=PTS-STARTPTS[v{i}]" for i in range(len(video_inputs))]
         v_labels = "".join(f"[v{i}]" for i in range(len(video_inputs)))
-        filter_complex = (
+        fc_template = (
             ";".join(pts_parts)
             + f";{v_labels}concat=n={len(video_inputs)}:v=1:a=0{pre_ass_filters},"
-            + f"ass=filename='{escaped_ass}'{fontsdir_arg},format=yuv420p[vfinal]"
+            + f"ass=filename='{escaped_ass}'{fontsdir_arg},format={{pix_fmt}}[vfinal]"
+        )
+        _run_encode_with_hw_fallback(
+            input_args=input_args,
+            fc_template=fc_template,
+            audio_idx=audio_input_idx,
         )
 
-    ff_cmd.extend([
-        "-filter_complex", filter_complex,
-        "-map", "[vfinal]",
-        "-map", f"{audio_input_idx}:a:0",
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-level", "4.2",
-        "-tune", "film",
-        "-crf", str(config.export.video_crf),
-        "-preset", config.export.video_preset,
-        "-x264-params", "aq-mode=3",
-        "-colorspace", "bt709",
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", config.export.audio_bitrate,
-        "-movflags", "+faststart",
-        "-shortest",
-        str(final_mp4),
-    ])
-    run_ffmpeg(ff_cmd)
+        if not final_thumb.exists():
+            _extract_best_vertical_thumbnail(
+                reframed_video=reframed_main,
+                output_jpg=final_thumb,
+                peak_offset_sec=peak_offset_sec,
+                detector=detector,
+            )
 
-    if not final_thumb.exists():
-        _extract_best_vertical_thumbnail(
-            reframed_video=reframed_main,
-            output_jpg=final_thumb,
-            peak_offset_sec=peak_offset_sec,
-            detector=detector,
-        )
+    if not final_thumb.exists() and final_mp4.exists():
+        try:
+            run_ffmpeg([
+                "-ss", f"{min(peak_offset_sec, max(0.1, slice_dur - 0.2)):.3f}",
+                "-i", str(final_mp4),
+                "-vframes", "1",
+                "-q:v", "3",
+                str(final_thumb),
+            ])
+        except Exception:  # noqa: BLE001
+            pass
+
     for tmp_p in cleanup_paths:
         tmp_p.unlink(missing_ok=True)
 

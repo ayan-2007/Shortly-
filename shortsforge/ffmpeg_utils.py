@@ -7,8 +7,9 @@ import os
 import platform
 import shutil
 import subprocess
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 
 class FFmpegNotFoundError(RuntimeError):
@@ -151,3 +152,101 @@ def escape_ffmpeg_filter_path(path: Path | str) -> str:
     resolved = str(Path(path).resolve()).replace("\\", "/")
     resolved = resolved.replace(":", "\\:").replace("'", "\\'")
     return resolved
+
+
+@lru_cache(maxsize=2)
+def _probe_working_hw_encoder(allow_hw: bool = True) -> str:
+    """Probe the fastest working hardware H.264 encoder once per process (NVENC -> QSV -> AMF -> libx264)."""
+    if not allow_hw:
+        return "libx264"
+    ffmpeg_bin = get_ffmpeg_bin()
+    candidates = [
+        ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20"]),
+        ("h264_qsv", ["-c:v", "h264_qsv", "-preset", "fast", "-global_quality", "20", "-pix_fmt", "nv12"]),
+        ("h264_amf", ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp", "-qp_i", "20", "-qp_p", "20"]),
+    ]
+    for name, enc_args in candidates:
+        try:
+            proc = subprocess.run(
+                [
+                    ffmpeg_bin,
+                    "-hide_banner",
+                    "-loglevel", "error",
+                    "-f", "lavfi",
+                    "-i", "color=c=black:s=640x360:d=0.15",
+                    *enc_args,
+                    "-f", "null",
+                    "-",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+            if proc.returncode == 0:
+                return name
+        except Exception:  # noqa: BLE001
+            continue
+    return "libx264"
+
+
+def get_h264_encode_args(
+    crf: int = 18,
+    preset: str = "veryfast",
+    hw_accel: bool = True,
+) -> Tuple[str, List[str], str]:
+    """Return (encoder_name, ffmpeg_video_args, filter_pix_fmt) using hardware GPU acceleration when available."""
+    enc = _probe_working_hw_encoder(allow_hw=bool(hw_accel))
+    q = max(14, min(28, int(crf) + 2))
+    if enc == "h264_nvenc":
+        return (
+            enc,
+            [
+                "-c:v", "h264_nvenc",
+                "-preset", "p4",
+                "-rc", "vbr",
+                "-cq", str(q),
+                "-b:v", "0",
+                "-profile:v", "high",
+                "-pix_fmt", "yuv420p",
+            ],
+            "yuv420p",
+        )
+    if enc == "h264_qsv":
+        return (
+            enc,
+            [
+                "-c:v", "h264_qsv",
+                "-preset", "fast",
+                "-global_quality", str(q),
+                "-g", "60",
+                "-pix_fmt", "nv12",
+            ],
+            "nv12",
+        )
+    if enc == "h264_amf":
+        return (
+            enc,
+            [
+                "-c:v", "h264_amf",
+                "-quality", "balanced",
+                "-rc", "cqp",
+                "-qp_i", str(q),
+                "-qp_p", str(q),
+                "-pix_fmt", "yuv420p",
+            ],
+            "yuv420p",
+        )
+    return (
+        "libx264",
+        [
+            "-c:v", "libx264",
+            "-profile:v", "high",
+            "-level", "4.2",
+            "-tune", "film",
+            "-crf", str(crf),
+            "-preset", preset,
+            "-x264-params", "aq-mode=2",
+            "-pix_fmt", "yuv420p",
+        ],
+        "yuv420p",
+    )

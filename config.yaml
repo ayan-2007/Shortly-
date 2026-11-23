@@ -124,8 +124,10 @@ review:
   server_port: 8765
 
 export:
-  video_crf: 16
-  video_preset: "fast"
+  video_crf: 18
+  video_preset: "veryfast"
+  hw_accel: true # Auto-detects Intel QSV / NVIDIA NVENC / AMD AMF GPU H.264 acceleration
+  render_workers: 0 # 0 = auto parallel clip rendering (2-3 clips simultaneously on multi-core CPUs)
   sharpen_strength: 0.22
   mirror_video: false # Horizontally mirror video footage (before burning captions so text remains readable)
   video_filters: [] # Up to 2 quality filters: "cinematic_grade" | "sharp_hd" | "denoise_clean" | "warm_studio"
