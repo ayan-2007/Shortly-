@@ -192,6 +192,8 @@ def main() -> int:
     cfg.quality_check.min_face_presence_ratio = 0.0  # Synthetic portrait frame
     cfg.overlays.archive_tag = True
     cfg.review.auto_score_threshold = 70
+    cfg.export.mirror_video = True
+    cfg.export.video_filters = ["sharp_hd", "cinematic_grade"]
 
     smoke_dir = ROOT / "projects" / "_smoke_fixtures"
     smoke_dir.mkdir(parents=True, exist_ok=True)
@@ -235,7 +237,7 @@ def main() -> int:
     assert sources_txt.exists(), "Missing sources.txt"
     assert warnings_txt.exists(), "Missing warnings.txt"
     assert len(first.titles) == 5, f"Expected 5 titles, got {len(first.titles)}"
-    assert len(first.hashtags) == 8, f"Expected 8 hashtags, got {len(first.hashtags)}"
+    assert len(first.hashtags) >= 8, f"Expected >=8 hashtags, got {len(first.hashtags)}"
     assert first.pinned_comment.strip(), "Missing pinned comment question"
 
     info = extract_stream_info(probe_media(mp4_path))

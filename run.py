@@ -51,6 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_render.add_argument("name", help="Project name previously initialized with `new`")
     p_render.add_argument("--auto", action="store_true", help="Ignore review page and render all clips >= threshold")
     p_render.add_argument("--min-score", type=int, default=None, help="Override auto-approval score threshold (0-100)")
+    p_render.add_argument("--mirror", action="store_true", help="Horizontally mirror the video footage")
+    p_render.add_argument(
+        "--filters",
+        default="",
+        help="1 or 2 comma-separated quality filters (sharp_hd,cinematic_grade,denoise_clean,warm_studio)",
+    )
     p_render.add_argument("--config", default=None, help="Path to custom config.yaml")
     p_render.add_argument("--force", action="store_true", help="Re-render clips even if already rendered")
 
@@ -88,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "render":
+            if args.mirror:
+                config.export.mirror_video = True
+            if args.filters:
+                config.export.video_filters = [f.strip() for f in args.filters.split(",") if f.strip()][:2]
             run_render_project(
                 project_name=args.name,
                 config=config,

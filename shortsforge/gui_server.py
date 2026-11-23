@@ -479,13 +479,23 @@ def create_gui_server(
                     return
 
                 cfg = self._cfg()
-                if body.get("caption_preset") in ("neon", "comic", "minimal"):
+                if body.get("caption_preset") in ("iman", "hormozi", "documentary", "neon", "comic", "minimal"):
                     cfg.captions.preset = body["caption_preset"]
                 if body.get("active_color") in ("yellow", "red"):
                     cfg.captions.active_color = body["active_color"]
                 if body.get("hook_style") in ("cold_open", "freeze_narrator"):
                     cfg.hook.style = body["hook_style"]
-                max_clips = max(1, min(10, int(body.get("max_clips") or 3)))
+                if "hook_enabled" in body:
+                    cfg.hook.enabled = bool(body["hook_enabled"])
+                if "mirror_video" in body:
+                    cfg.export.mirror_video = bool(body["mirror_video"])
+                if isinstance(body.get("video_filters"), list):
+                    cfg.export.video_filters = [str(f).strip() for f in body["video_filters"] if str(f).strip()][:2]
+                if "music_enabled" in body:
+                    cfg.audio.bg_music_enabled = bool(body["music_enabled"])
+                    cfg.audio.hook_bed_enabled = bool(body["music_enabled"])
+                raw_max = body.get("max_clips")
+                max_clips = 15 if (raw_max is None or int(raw_max) <= 0) else max(1, min(15, int(raw_max)))
                 force = bool(body.get("force", False))
 
                 def _run_auto(rec: JobRecord) -> None:
@@ -526,7 +536,7 @@ def create_gui_server(
                     return
 
                 cfg = self._cfg()
-                if body.get("caption_preset") in ("neon", "comic", "minimal"):
+                if body.get("caption_preset") in ("iman", "hormozi", "documentary", "neon", "comic", "minimal"):
                     cfg.captions.preset = body["caption_preset"]
                 if body.get("active_color") in ("yellow", "red"):
                     cfg.captions.active_color = body["active_color"]
@@ -535,7 +545,8 @@ def create_gui_server(
 
                 name = str(body.get("name") or "").strip() or "project"
                 person = str(body.get("person") or "").strip() or "Speaker"
-                max_clips = int(body.get("max_clips") or cfg.moments.max_candidates)
+                raw_max = int(body["max_clips"]) if body.get("max_clips") is not None else cfg.moments.max_candidates
+                max_clips = 15 if raw_max <= 0 else max(1, min(15, raw_max))
                 min_score = int(body.get("min_score") or cfg.review.auto_score_threshold)
                 auto = bool(body.get("auto", True))
                 deceased = bool(body.get("deceased", False))
@@ -577,12 +588,16 @@ def create_gui_server(
                 cfg = self._cfg()
                 if body.get("hook_style") in ("cold_open", "freeze_narrator"):
                     cfg.hook.style = body["hook_style"]
-                if body.get("caption_preset") in ("neon", "comic", "minimal"):
+                if body.get("caption_preset") in ("iman", "hormozi", "documentary", "neon", "comic", "minimal"):
                     cfg.captions.preset = body["caption_preset"]
                 if body.get("active_color") in ("yellow", "red"):
                     cfg.captions.active_color = body["active_color"]
                 if "archive_tag" in body:
                     cfg.overlays.archive_tag = bool(body["archive_tag"])
+                if "mirror_video" in body:
+                    cfg.export.mirror_video = bool(body["mirror_video"])
+                if isinstance(body.get("video_filters"), list):
+                    cfg.export.video_filters = [str(f).strip() for f in body["video_filters"] if str(f).strip()][:2]
 
                 auto = bool(body.get("auto", False))
                 force = bool(body.get("force", False))
@@ -655,9 +670,22 @@ def launch_gui(
     port: int = 8780,
     open_browser: bool = True,
 ) -> None:
-    """Start the local ShortsForge Studio GUI server and open it in the default browser."""
-    server = create_gui_server(config_path=config_path, host=host, port=port)
+    """Start the local ShortsForge Studio GUI server (or open the browser if already running)."""
+    import urllib.request
+
     url = f"http://{host}:{port}/"
+    # Probe first (Windows SO_REUSEADDR can otherwise bind twice instead of raising OSError)
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/api/config", timeout=0.8) as resp:
+            if resp.status == 200:
+                print(f"ShortsForge Studio is already running at {url}")
+                if open_browser:
+                    webbrowser.open(url)
+                return
+    except Exception:  # noqa: BLE001
+        pass
+
+    server = create_gui_server(config_path=config_path, host=host, port=port)
     print(f"ShortsForge Studio GUI running at {url}  (press Ctrl+C to stop)")
     if open_browser:
         threading.Timer(0.45, lambda: webbrowser.open(url)).start()

@@ -524,7 +524,7 @@ function renderNewProjectView() {
     ${renderJobBannerHtml()}
     <div class="hero-box">
       <h3>Paste Video Link</h3>
-      <p>Automatically fetches the video, extracts the transcript, finds the most viral moments, and renders 9:16 Shorts with bold animated captions.</p>
+      <p>Automatically fetches the highest-resolution HD video, selects only genuine high-retention viral moments (strictly quality over quantity, capped at 15 max clips per run with zero mid-thought cutoffs), adds Iman Gadzhi / Alex Hormozi / Documentary kinetic opening titles &amp; animated captions, applies your choice of studio quality enhancement filters &amp; video mirroring, and writes video-specific titles, captions &amp; hashtags.</p>
       <div class="link-bar">
         <input type="text" class="link-input" id="f-source" placeholder="Paste YouTube URL (https://youtu.be/...) or local file path" autofocus />
         <button class="btn-secondary" type="button" id="btn-browse">Browse File</button>
@@ -533,25 +533,54 @@ function renderNewProjectView() {
       <div class="quick-opts">
         <span>Caption Style:
           <select id="f-cap-preset">
-            <option value="neon" selected>Neon Bold (94pt)</option>
-            <option value="comic">Comic Punch (94pt)</option>
-            <option value="minimal">Clean Bold</option>
+            <option value="iman" selected>Iman Gadzhi Kinetic (Default)</option>
+            <option value="hormozi">Alex Hormozi Impact</option>
+            <option value="documentary">Documentary Editorial</option>
+            <option value="neon">Neon Bold</option>
+            <option value="comic">Comic Punch</option>
+            <option value="minimal">Clean Minimal</option>
           </select>
         </span>
         <span>Highlight Color:
           <select id="f-cap-color">
-            <option value="yellow" selected>Electric Yellow</option>
-            <option value="red">Viral Red</option>
+            <option value="yellow" selected>Luxury Gold / Yellow</option>
+            <option value="red">Viral Crimson Red</option>
           </select>
         </span>
-        <span>Shorts to Generate:
+        <span>Max Viral Clips (Cap 15):
           <select id="f-max-clips">
-            <option value="2">2 Shorts (Fastest)</option>
-            <option value="3" selected>3 Shorts</option>
-            <option value="5">5 Shorts</option>
-            <option value="10">10 Shorts</option>
+            <option value="15" selected>Up to 15 Viral Clips (Max Cap)</option>
+            <option value="10">Up to 10 Viral Clips</option>
+            <option value="5">Up to 5 Viral Clips (Top Picks)</option>
+            <option value="3">Up to 3 Viral Clips (Elite Only)</option>
           </select>
         </span>
+        <span>Quality Filter 1:
+          <select id="f-filter-1">
+            <option value="" selected>None</option>
+            <option value="sharp_hd">Crisp HD Detail &amp; Sharpen</option>
+            <option value="cinematic_grade">Cinematic Color &amp; Contrast</option>
+            <option value="denoise_clean">Studio Denoise &amp; Cleanup</option>
+            <option value="warm_studio">Warm Studio &amp; Vignette</option>
+          </select>
+        </span>
+        <span>Quality Filter 2:
+          <select id="f-filter-2">
+            <option value="" selected>None</option>
+            <option value="cinematic_grade">Cinematic Color &amp; Contrast</option>
+            <option value="sharp_hd">Crisp HD Detail &amp; Sharpen</option>
+            <option value="denoise_clean">Studio Denoise &amp; Cleanup</option>
+            <option value="warm_studio">Warm Studio &amp; Vignette</option>
+          </select>
+        </span>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="f-mirror-video" style="accent-color:var(--accent);" />
+          Mirror Video (Horizontal Flip)
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="f-hook-enabled" checked style="accent-color:var(--accent);" />
+          Kinetic Hook Opener
+        </label>
       </div>
     </div>
   `;
@@ -570,11 +599,19 @@ function renderNewProjectView() {
       return;
     }
     try {
+      const rawMax = parseInt(document.getElementById("f-max-clips").value, 10);
+      const selectedFilters = [
+        document.getElementById("f-filter-1").value,
+        document.getElementById("f-filter-2").value,
+      ].filter(Boolean);
       const job = await apiPost("/api/jobs/autopilot", {
         source: src,
         caption_preset: document.getElementById("f-cap-preset").value,
         active_color: document.getElementById("f-cap-color").value,
-        max_clips: parseInt(document.getElementById("f-max-clips").value, 10) || 3,
+        max_clips: Number.isNaN(rawMax) ? 15 : Math.min(15, Math.max(1, rawMax)),
+        hook_enabled: document.getElementById("f-hook-enabled").checked,
+        mirror_video: document.getElementById("f-mirror-video").checked,
+        video_filters: selectedFilters,
       });
       startPollingJob(job);
     } catch (e) { showToast(e.message); }
@@ -634,8 +671,32 @@ function renderReviewTab(p) {
   document.getElementById("content").innerHTML = `
     ${renderJobBannerHtml()}
     <div class="panel" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-      <div style="font-size:13px; color:var(--muted);">Approve clips or tweak their 3-second hook below, then click Render.</div>
-      <button class="btn-green" id="btn-render-approved">Render Approved Shorts &rarr;</button>
+      <div style="font-size:13px; color:var(--muted);">Approve clips or tweak their 3-second kinetic hook below, choose optional mirroring &amp; quality filters, then click Render.</div>
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:12.5px; color:var(--muted);">
+        <span>Filter 1:
+          <select id="r-filter-1" style="padding:5px 8px;border-radius:7px;border:1px solid var(--border);background:#0d111a;color:var(--text);">
+            <option value="">None</option>
+            <option value="sharp_hd">Crisp HD Sharpen</option>
+            <option value="cinematic_grade">Cinematic Color</option>
+            <option value="denoise_clean">Studio Denoise</option>
+            <option value="warm_studio">Warm Studio</option>
+          </select>
+        </span>
+        <span>Filter 2:
+          <select id="r-filter-2" style="padding:5px 8px;border-radius:7px;border:1px solid var(--border);background:#0d111a;color:var(--text);">
+            <option value="">None</option>
+            <option value="cinematic_grade">Cinematic Color</option>
+            <option value="sharp_hd">Crisp HD Sharpen</option>
+            <option value="denoise_clean">Studio Denoise</option>
+            <option value="warm_studio">Warm Studio</option>
+          </select>
+        </span>
+        <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;">
+          <input type="checkbox" id="r-mirror-video" style="accent-color:var(--accent);" />
+          Mirror Video
+        </label>
+        <button class="btn-green" id="btn-render-approved">Render Approved Shorts &rarr;</button>
+      </div>
     </div>
     <div class="cards-grid" id="rev-cards"></div>
   `;
@@ -697,7 +758,16 @@ function renderReviewTab(p) {
   document.getElementById("btn-render-approved").addEventListener("click", async () => {
     await persistDecisions();
     try {
-      const job = await apiPost("/api/jobs/render", { name: p.name, force: true });
+      const rFilters = [
+        document.getElementById("r-filter-1").value,
+        document.getElementById("r-filter-2").value,
+      ].filter(Boolean);
+      const job = await apiPost("/api/jobs/render", {
+        name: p.name,
+        force: true,
+        mirror_video: document.getElementById("r-mirror-video").checked,
+        video_filters: rFilters,
+      });
       startPollingJob(job);
     } catch (e) { showToast(e.message); }
   });
@@ -736,11 +806,16 @@ function renderOutputsTab(p) {
         </div>
         <div>
           <div style="margin-bottom:12px;">
-            <div style="font-size:16px; font-weight:800; color:var(--blue);">${esc(o.clip_id.toUpperCase())} &mdash; ${esc(o.hook_text)}</div>
-            <div style="font-size:12px; color:var(--muted);">${esc(o.output_video)} &bull; ${fmtTime(o.start)}-${fmtTime(o.end)}</div>
+            <div style="font-size:16px; font-weight:800; color:var(--blue);">${esc(o.clip_id.toUpperCase())} &mdash; ${esc(o.hook_text)} <span class="badge yellow" style="margin-left:6px;">KINETIC CAPTIONS</span></div>
+            <div style="font-size:12px; color:var(--muted);">${esc(o.output_video)} &bull; ${fmtTime(o.start)}-${fmtTime(o.end)} (${Math.round((o.end || 0) - (o.start || 0))}s)</div>
           </div>
+          ${o.post_caption ? `
           <div class="meta-block">
-            <h4>5 Title Options</h4>
+            <h4>Ready-to-Post Social Caption <button class="copy-mini" data-copy="${esc(o.post_caption)}">Copy Caption</button></h4>
+            <div class="copy-box">${esc(o.post_caption)}</div>
+          </div>` : ""}
+          <div class="meta-block">
+            <h4>5 Video-Specific Titles</h4>
             <ul class="title-list">
               ${(o.titles || []).map((t, ti) => `<li><span>${ti + 1}. ${esc(t)}</span><button class="copy-mini" data-copy="${esc(t)}">Copy</button></li>`).join("")}
             </ul>
@@ -750,7 +825,7 @@ function renderOutputsTab(p) {
             <div class="copy-box">${esc(o.description)}</div>
           </div>
           <div class="meta-block">
-            <h4>8 Hashtags <button class="copy-mini" data-copy="${esc((o.hashtags || []).join(" "))}">Copy All</button></h4>
+            <h4>${(o.hashtags || []).length} Topic Hashtags <button class="copy-mini" data-copy="${esc((o.hashtags || []).join(" "))}">Copy All</button></h4>
             <div class="tags-wrap">${(o.hashtags || []).map(h => `<span class="tag-chip">${esc(h)}</span>`).join("")}</div>
           </div>
           <div class="meta-block">
