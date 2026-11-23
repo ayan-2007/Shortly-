@@ -82,7 +82,8 @@ class QualityCheckConfig(BaseModel):
 
 
 class HookConfig(BaseModel):
-    enabled: bool = True
+    enabled: bool = False
+    show_opening_title: bool = False
     style: Literal["cold_open", "freeze_narrator"] = "cold_open"
     variants_count: int = 5
     max_words: int = 9
@@ -115,7 +116,7 @@ class CaptionsConfig(BaseModel):
     font_name: str = ""
     font_size: int = 94
     emphasis_scale: float = 1.26
-    active_color: Literal["yellow", "red"] = "yellow"
+    active_color: Literal["purple", "yellow", "red"] = "purple"
     safe_margin_left: int = 80
     safe_margin_right: int = 160
     safe_margin_bottom: int = 360

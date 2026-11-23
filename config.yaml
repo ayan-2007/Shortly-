@@ -63,7 +63,8 @@ quality_check:
   min_estimated_snr_db: 6.0
 
 hook:
-  enabled: true
+  enabled: false
+  show_opening_title: false
   style: "cold_open" # "cold_open" | "freeze_narrator"
   variants_count: 5
   max_words: 9
@@ -94,7 +95,7 @@ captions:
   font_name: "" # Leave blank to auto-select ultra-bold display font (Montserrat Black / Arial Black / Impact)
   font_size: 94
   emphasis_scale: 1.26
-  active_color: "yellow" # "yellow" | "red"
+  active_color: "purple" # "purple" | "yellow" | "red"
   safe_margin_left: 80
   safe_margin_right: 160
   safe_margin_bottom: 360

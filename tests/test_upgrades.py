@@ -172,12 +172,15 @@ def test_hooks_never_produce_dangling_ellipsis_fragments() -> None:
 
 def test_iman_hormozi_documentary_kinetic_captions_and_clean_audio_defaults() -> None:
     cfg = AppConfig()
-    # Music and whoosh must be off by default
+    # Music, whoosh, and opening title text must be off by default; captions default to neon purple
     assert cfg.audio.bg_music_enabled is False
     assert cfg.audio.hook_bed_enabled is False
     assert cfg.audio.transition_sfx_enabled is False
+    assert cfg.hook.enabled is False
+    assert cfg.hook.show_opening_title is False
     assert cfg.hook.transition_duration_sec == 0.0
     assert cfg.captions.preset == "iman"
+    assert cfg.captions.active_color == "purple"
 
     words = [
         WordTimestamp(word="90%", start=10.0, end=10.3),
@@ -191,7 +194,7 @@ def test_iman_hormozi_documentary_kinetic_captions_and_clean_audio_defaults() ->
         ass = build_ass_captions(
             clip_words=words,
             clip_start=10.0,
-            time_offset=2.8,
+            time_offset=0.0,
             config=cfg,
             key_quote="90% comes from China.",
             hook_text="The 90% Chokehold Nobody Realizes.",
@@ -199,10 +202,13 @@ def test_iman_hormozi_documentary_kinetic_captions_and_clean_audio_defaults() ->
             hook_start=10.0,
             hook_banner_duration=2.8,
         )
-        assert "HookTitle" in ass
-        assert "Dialogue: 1," in ass  # Ambient glow layer
-        assert "Dialogue: 2," in ass  # Sharp kinetic foreground layer
-        assert "Dialogue: 0," in ass  # Animated word-by-word captions
+        # No opening title overlay events when show_opening_title is False (default)
+        assert "Dialogue: 1," not in ass
+        assert "Dialogue: 2," not in ass
+        # Animated word-by-word captions rendered in electric neon purple
+        assert "Dialogue: 0," in ass
+        assert PRESETS[preset_name].active_purple in ass
+        assert PRESETS[preset_name].neon_glow_outline in ass
 
 
 def test_mirror_video_and_quality_enhancement_filters() -> None:
@@ -260,10 +266,11 @@ def test_kinetic_hook_headline_and_video_specific_metadata() -> None:
         WordTimestamp(word="every", start=10.3, end=10.6),
         WordTimestamp(word="month.", start=10.6, end=11.0),
     ]
-    ass = build_ass_captions(
+    # By default, no opening title text is burned at the start of the video
+    ass_clean = build_ass_captions(
         clip_words=words,
         clip_start=10.0,
-        time_offset=3.2,
+        time_offset=0.0,
         config=cfg,
         key_quote="Invest every month.",
         hook_text="Stop making this money mistake",
@@ -271,6 +278,6 @@ def test_kinetic_hook_headline_and_video_specific_metadata() -> None:
         hook_start=10.0,
         hook_banner_duration=2.8,
     )
-    assert "HookTitle" in ass
-    assert "Dialogue: 1," in ass
-    assert "Dialogue: 0," in ass
+    assert "Dialogue: 1," not in ass_clean
+    assert "Dialogue: 0," in ass_clean
+    assert PRESETS["iman"].active_purple in ass_clean

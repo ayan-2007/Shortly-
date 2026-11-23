@@ -16,9 +16,10 @@ from shortsforge.models import WordTimestamp
 class CaptionPreset:
     name: str
     primary_bgr: str      # Inactive word color (&HBBGGRR&)
+    active_purple: str    # Active electric neon purple highlight (default)
     active_yellow: str    # Active gold/yellow highlight
     active_red: str       # Active crimson/red highlight
-    emphasis_bgr: str     # Numbers / money / power words accent color
+    emphasis_bgr: str     # Numbers / money / power words neon accent color
     outline_bgr: str
     shadow_bgr: str
     outline_width: float
@@ -28,98 +29,111 @@ class CaptionPreset:
     border_style: int = 1
     uppercase: bool = True
     letter_spacing: int = 2
+    neon_glow_outline: str = "&H00480B66"  # Deep neon violet outer glow border
 
 
 PRESETS: Dict[str, CaptionPreset] = {
     "iman": CaptionPreset(
         name="iman",
         primary_bgr="&H00FFFFFF",
-        active_yellow="&H0028C8FF",  # Signature warm luxury gold/amber
-        active_red="&H003838FF",     # Documentary crimson
-        emphasis_bgr="&H0055F0FF",   # Radiant gold-cyan emphasis
-        outline_bgr="&H0008080D",
+        active_purple="&H00FF5CB2",  # Electric neon purple (#B25CFF)
+        active_yellow="&H0028C8FF",  # Optional warm luxury gold/amber
+        active_red="&H003838FF",     # Optional documentary crimson
+        emphasis_bgr="&H00FF78C6",   # Luminous electric violet (#C678FF)
+        outline_bgr="&H00180624",    # Deep violet-black outline for crisp contrast
         shadow_bgr="&H64000000",
         outline_width=8.5,
         shadow_depth=7.0,
-        blur_amount=1.4,
+        blur_amount=1.6,
         tilt_deg=0.0,
         uppercase=True,
         letter_spacing=3,
+        neon_glow_outline="&H0062104E",
     ),
     "hormozi": CaptionPreset(
         name="hormozi",
         primary_bgr="&H00FFFFFF",
-        active_yellow="&H0000EAFF",  # Electric Hormozi yellow
-        active_red="&H002424FF",     # Viral punch red
-        emphasis_bgr="&H0038F545",   # Cash green for numbers/power words
-        outline_bgr="&H00000000",
+        active_purple="&H00FF4DA8",  # Vivid neon purple (#A84DFF)
+        active_yellow="&H0000EAFF",  # Optional Hormozi yellow
+        active_red="&H002424FF",     # Optional viral punch red
+        emphasis_bgr="&H00FF72C2",   # Electric violet (#C272FF)
+        outline_bgr="&H000E0416",
         shadow_bgr="&H45000000",
         outline_width=11.0,
         shadow_depth=8.0,
-        blur_amount=0.8,
+        blur_amount=1.2,
         tilt_deg=2.0,
         uppercase=True,
         letter_spacing=2,
+        neon_glow_outline="&H00580C46",
     ),
     "documentary": CaptionPreset(
         name="documentary",
         primary_bgr="&H00F8FAFC",
-        active_yellow="&H0038C2FF",  # Editorial documentary gold
+        active_purple="&H00FF6EB8",  # Editorial neon amethyst (#B86EFF)
+        active_yellow="&H0038C2FF",  # Optional editorial gold
         active_red="&H003535FF",
-        emphasis_bgr="&H0078E8FF",
-        outline_bgr="&H000A0C12",
+        emphasis_bgr="&H00FF88CC",
+        outline_bgr="&H0012071E",
         shadow_bgr="&H60000000",
         outline_width=7.5,
         shadow_depth=7.5,
-        blur_amount=1.2,
+        blur_amount=1.4,
         tilt_deg=0.0,
         uppercase=True,
         letter_spacing=4,
+        neon_glow_outline="&H00561248",
     ),
     "neon": CaptionPreset(
         name="neon",
         primary_bgr="&H00FFFFFF",
+        active_purple="&H00FF42AE",  # Hyper neon purple (#AE42FF)
         active_yellow="&H0000EAFF",
         active_red="&H003224FF",
-        emphasis_bgr="&H00FFF000",
-        outline_bgr="&H000B0612",
+        emphasis_bgr="&H00FF70C8",
+        outline_bgr="&H001A0526",
         shadow_bgr="&H70000000",
         outline_width=9.5,
         shadow_depth=6.5,
-        blur_amount=1.2,
+        blur_amount=1.8,
         tilt_deg=0.0,
         uppercase=True,
         letter_spacing=2,
+        neon_glow_outline="&H0070125C",
     ),
     "comic": CaptionPreset(
         name="comic",
         primary_bgr="&H00FAFCFF",
+        active_purple="&H00FF56B0",
         active_yellow="&H0000DCFF",
         active_red="&H002020FF",
-        emphasis_bgr="&H000099FF",
-        outline_bgr="&H00000000",
+        emphasis_bgr="&H00FF76C4",
+        outline_bgr="&H000D0414",
         shadow_bgr="&H40000000",
         outline_width=11.5,
         shadow_depth=8.0,
-        blur_amount=0.4,
+        blur_amount=0.8,
         tilt_deg=2.2,
         uppercase=True,
         letter_spacing=2,
+        neon_glow_outline="&H005C0E4C",
     ),
     "minimal": CaptionPreset(
         name="minimal",
         primary_bgr="&H00F5F7FA",
+        active_purple="&H00FF74BE",
         active_yellow="&H0032E0FF",
         active_red="&H004848FF",
-        emphasis_bgr="&H0098F5B0",
-        outline_bgr="&H00101218",
+        emphasis_bgr="&H00FF92D0",
+        outline_bgr="&H00120A1C",
         shadow_bgr="&H78000000",
         outline_width=6.0,
         shadow_depth=4.0,
-        blur_amount=0.3,
+        blur_amount=0.8,
         tilt_deg=0.0,
         uppercase=False,
         letter_spacing=2,
+        neon_glow_outline="&H004E1044",
     ),
 }
 
@@ -254,6 +268,7 @@ def _build_word_dialogue_events(
                 line_motion = f"{{\\an5{tilt_tag}\\pos({center_x},{center_y})}}"
 
             styled_tokens: List[str] = []
+            glow_outline_tag = f"\\3c{preset.neon_glow_outline}&" if active_color == preset.active_purple else ""
             for idx, w in enumerate(grp):
                 raw_tok = w.word.upper() if preset.uppercase else w.word
                 tok = _escape_ass_text(raw_tok)
@@ -264,13 +279,13 @@ def _build_word_dialogue_events(
                         peak_s = min(158, emph_pct + 20)
                         settle_s = emph_pct
                         styled_tokens.append(
-                            f"{{\\c{preset.emphasis_bgr}{blur_tag}\\fsp{preset.letter_spacing + 1}"
+                            f"{{\\c{preset.emphasis_bgr}{glow_outline_tag}{blur_tag}\\fsp{preset.letter_spacing + 1}"
                             f"\\fscx{peak_s}\\fscy{peak_s}"
                             f"\\t(0,95,\\fscx{settle_s}\\fscy{settle_s})}}{tok}{{\\r}}"
                         )
                     else:
                         styled_tokens.append(
-                            f"{{\\c{active_color}{blur_tag}\\fsp{preset.letter_spacing}"
+                            f"{{\\c{active_color}{glow_outline_tag}{blur_tag}\\fsp{preset.letter_spacing}"
                             f"\\fscx132\\fscy132"
                             f"\\t(0,82,\\fscx109\\fscy109)}}{tok}{{\\r}}"
                         )
@@ -380,7 +395,12 @@ def build_ass_captions(
     font_family = config.captions.font_name or auto_family
 
     keywords = extract_emphasis_keywords(key_quote, hook_text)
-    active_color = preset.active_red if config.captions.active_color == "red" else preset.active_yellow
+    if config.captions.active_color == "red":
+        active_color = preset.active_red
+    elif config.captions.active_color == "yellow":
+        active_color = preset.active_yellow
+    else:
+        active_color = preset.active_purple
     emph_pct = int(round(config.captions.emphasis_scale * 100))
 
     play_x = config.reframe.output_width
@@ -408,9 +428,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     dialogue_lines: List[str] = []
     floor_t = 0.0
 
-    # Cold-open hook spoken captions + Iman Gadzhi / Documentary staggered kinetic title (0:00 -> hook_banner_duration)
+    # Cold-open spoken captions (only burn opening title text if explicitly enabled; off by default for clean framing)
+    show_title = bool(getattr(config.hook, "show_opening_title", False))
     if hook_banner_duration > 0.2:
-        if hook_text:
+        if show_title and hook_text:
             hk_evs = _build_kinetic_hook_events(
                 hook_text=hook_text,
                 hook_dur=hook_banner_duration,
