@@ -115,22 +115,35 @@ def _is_ad_or_housekeeping_sentence(sent: Sentence) -> bool:
     return bool(_SPONSOR_CLIP_RE.search(txt))
 
 
-def _is_continuation_start(sent: Sentence) -> bool:
+def _transcript_has_punctuation(sentences: List[Sentence]) -> bool:
+    """Return True if the transcript contains normal sentence punctuation/capitalization (vs YouTube auto-captions)."""
+    non_empty = [re.sub(r"^>>\s*", "", s.text.strip()).strip() for s in sentences if s.text.strip()]
+    if not non_empty:
+        return True
+    punct_or_cap = sum(
+        1
+        for t in non_empty
+        if re.search(r"[.!?][\"'\)\]]*$", t) or (t and t[0].isupper())
+    )
+    return (punct_or_cap / len(non_empty)) >= 0.20
+
+
+def _is_continuation_start(sent: Sentence, has_punctuation: bool = True) -> bool:
     txt = re.sub(r"^>>\s*", "", sent.text.strip()).strip()
     if not txt:
         return False
-    if txt[0].islower():
+    if has_punctuation and txt[0].islower():
         return True
     return bool(_CONTINUATION_START_RE.match(txt))
 
 
-def _is_incomplete_end(sent: Sentence) -> bool:
+def _is_incomplete_end(sent: Sentence, has_punctuation: bool = True) -> bool:
     txt = sent.text.strip()
     if not txt:
         return False
     if txt.endswith((",", ";", ":", "-", "—", "...")):
         return True
-    if not re.search(r"[.!?][\"'\)\]]*$", txt):
+    if has_punctuation and not re.search(r"[.!?][\"'\)\]]*$", txt):
         return True
     tokens = [re.sub(r"[^a-zA-Z']", "", t).lower() for t in txt.split()]
     tokens = [t for t in tokens if t]
@@ -157,6 +170,7 @@ def snap_to_complete_message(
     if not sentences:
         return None
 
+    has_punct = _transcript_has_punctuation(sentences)
     start_idx = min(range(len(sentences)), key=lambda i: abs(sentences[i].start - raw_start))
     end_idx = min(range(start_idx, len(sentences)), key=lambda i: abs(sentences[i].end - raw_end))
 
@@ -181,26 +195,27 @@ def snap_to_complete_message(
         if (anchor_start_t - prev_s.start) > max_backward_expand_sec:
             break
         gap = cur_s.start - prev_s.end
-        prev_incomplete = _is_incomplete_end(prev_s)
-        cur_continues = _is_continuation_start(cur_s)
+        prev_incomplete = _is_incomplete_end(prev_s, has_punctuation=has_punct)
+        cur_continues = _is_continuation_start(cur_s, has_punctuation=has_punct)
         prev_is_short_question = prev_s.text.strip().endswith("?") and (prev_s.end - prev_s.start) <= 14.0
-        same_speaker_tight = (prev_s.speaker == cur_s.speaker) and gap < 0.75 and not re.search(r"[.!?]$", prev_s.text.strip())
+        same_speaker_tight = has_punct and (prev_s.speaker == cur_s.speaker) and gap < 0.75 and not re.search(r"[.!?]$", prev_s.text.strip())
 
         if prev_incomplete or cur_continues or prev_is_short_question or same_speaker_tight:
             start_idx -= 1
-            if prev_is_short_question and not _is_continuation_start(prev_s):
+            if prev_is_short_question and not _is_continuation_start(prev_s, has_punctuation=has_punct):
                 break
         else:
             break
 
     # If the first sentence is still an orphan lowercase tail fragment from a prior answer and the next sentence
     # starts cleanly, advance past the orphan fragment so the clip opens on a clean sentence boundary.
-    while start_idx < end_idx and _dur(start_idx + 1, end_idx) >= min_duration:
-        first_txt = re.sub(r"^>>\s*", "", sentences[start_idx].text.strip()).strip()
-        if (first_txt and first_txt[0].islower()) or re.match(r"^(?:you know|yeah,\s*yeah|and\s+so\s+that's)\b", first_txt, re.I):
-            start_idx += 1
-        else:
-            break
+    if has_punct:
+        while start_idx < end_idx and _dur(start_idx + 1, end_idx) >= min_duration:
+            first_txt = re.sub(r"^>>\s*", "", sentences[start_idx].text.strip()).strip()
+            if (first_txt and first_txt[0].islower()) or re.match(r"^(?:you know|yeah,\s*yeah|and\s+so\s+that's)\b", first_txt, re.I):
+                start_idx += 1
+            else:
+                break
 
     anchor_end_t = sentences[end_idx].end
     # 2. Walk forward until the speaker actually completes their thought/payoff (never stepping into an ad)
@@ -214,18 +229,18 @@ def snap_to_complete_message(
             break
 
         need_min = _dur(start_idx, end_idx) < min_duration
-        cur_incomplete = _is_incomplete_end(cur_s)
-        next_continues = _is_continuation_start(next_s)
-        tight_pause = (next_s.start - cur_s.end) < 0.55 and cur_s.speaker == next_s.speaker
+        cur_incomplete = _is_incomplete_end(cur_s, has_punctuation=has_punct)
+        next_continues = _is_continuation_start(next_s, has_punctuation=has_punct)
+        tight_pause = has_punct and (next_s.start - cur_s.end) < 0.55 and cur_s.speaker == next_s.speaker
         within_forward_budget = (next_s.end - anchor_end_t) <= max_forward_expand_sec
 
         if need_min or (within_forward_budget and (cur_incomplete or next_continues or tight_pause)):
             end_idx += 1
-            if not need_min and not _is_incomplete_end(sentences[end_idx]) and (
+            if not need_min and not _is_incomplete_end(sentences[end_idx], has_punctuation=has_punct) and (
                 end_idx + 1 >= len(sentences)
                 or (
-                    not _is_continuation_start(sentences[end_idx + 1])
-                    and (sentences[end_idx + 1].start - sentences[end_idx].end) >= 0.70
+                    not _is_continuation_start(sentences[end_idx + 1], has_punctuation=has_punct)
+                    and (not has_punct or (sentences[end_idx + 1].start - sentences[end_idx].end) >= 0.70)
                 )
             ):
                 break
@@ -252,7 +267,7 @@ def snap_to_complete_message(
     # 4. Trim any trailing incomplete/dangling sentence at the end if doing so keeps duration >= min_duration
     while end_idx > start_idx and _dur(start_idx, end_idx - 1) >= min_duration:
         last_s = sentences[end_idx]
-        if _is_incomplete_end(last_s) or _VISUAL_PROP_RE.search(last_s.text):
+        if _is_incomplete_end(last_s, has_punctuation=has_punct) or _VISUAL_PROP_RE.search(last_s.text):
             end_idx -= 1
         else:
             break
@@ -296,8 +311,10 @@ def _snap_peak_to_words(
     )
 
 
-def _pick_crux_sentence(selected_sents: List[Sentence]) -> Sentence:
+def _pick_crux_sentence(selected_sents: List[Sentence], has_punctuation: Optional[bool] = None) -> Sentence:
     """Pick the most punchy, self-contained quote/crux sentence inside a clip (never an incomplete fragment)."""
+    has_punct = _transcript_has_punctuation(selected_sents) if has_punctuation is None else has_punctuation
+
     def _sent_rank(s: Sentence) -> float:
         txt = re.sub(r"^>>\s*", "", s.text.strip()).strip()
         wc = len(txt.split())
@@ -309,9 +326,9 @@ def _pick_crux_sentence(selected_sents: List[Sentence]) -> Sentence:
         elif wc > 32:
             score -= 10.0
 
-        if _is_incomplete_end(s):
+        if _is_incomplete_end(s, has_punctuation=has_punct):
             score -= 45.0
-        if txt and txt[0].islower():
+        if has_punct and txt and txt[0].islower():
             score -= 20.0
         if _FILLER_LEAD_RE.match(txt):
             score -= 22.0
@@ -326,7 +343,7 @@ def _pick_crux_sentence(selected_sents: List[Sentence]) -> Sentence:
         for pat in _VIRAL_HOOK_PATTERNS:
             if re.search(pat, txt, re.I):
                 score += 18.0
-        if re.search(r"(\$\d|\d+%|\b(?:million|billion|thousand|truth|never|always|secret|warning|problem|rule|formula|changed|mistake)\b)", txt, re.I):
+        if re.search(r"(\$\d|\d+%|\b(?:million|billion|thousand|truth|never|always|secret|warning|problem|rule|formula|changed|mistake|future|price|painful|critical|performance|breakthrough|hardest|biggest|first|open)\b)", txt, re.I):
             score += 24.0
         score += min(16.0, wc * 0.75)
         return score
@@ -337,11 +354,13 @@ def _pick_crux_sentence(selected_sents: List[Sentence]) -> Sentence:
 def evaluate_viral_potential(
     selected_sents: List[Sentence],
     clip_text: str,
+    has_punctuation: Optional[bool] = None,
 ) -> Tuple[bool, ScoreBreakdown]:
     """Strictly evaluate whether a candidate clip is a genuine standalone viral moment vs random podcast filler."""
     if not selected_sents:
         return False, ScoreBreakdown(emotional_peak=30, quotable_statement=30, humor_payoff=30, self_contained=30, clean_boundaries=30)
 
+    has_punct = _transcript_has_punctuation(selected_sents) if has_punctuation is None else has_punctuation
     words = clip_text.split()
     wc = len(words)
     if wc < 14:
@@ -367,27 +386,34 @@ def evaluate_viral_potential(
     if filler_ratio > 0.085 or (visual_prop_hits > 0 and filler_ratio > 0.04):
         return False, ScoreBreakdown(emotional_peak=52, quotable_statement=48, humor_payoff=45, self_contained=45, clean_boundaries=50)
 
-    # Check boundary cleanliness
+    # Check boundary cleanliness (punctuation-aware so unpunctuated YouTube auto-captions are judged fairly)
     first_s = selected_sents[0]
     last_s = selected_sents[-1]
-    starts_clean = not _is_continuation_start(first_s)
-    ends_clean = not _is_incomplete_end(last_s)
-    if not ends_clean and len(selected_sents) <= 2:
+    starts_clean = not _is_continuation_start(first_s, has_punctuation=has_punct)
+    ends_clean = not _is_incomplete_end(last_s, has_punctuation=has_punct)
+    if has_punct and not ends_clean and len(selected_sents) <= 2:
         return False, ScoreBreakdown(emotional_peak=50, quotable_statement=50, humor_payoff=50, self_contained=45, clean_boundaries=40)
 
-    # Positive viral signals
+    # Positive viral signals across ALL niches (podcasts, tech/gaming, interviews, business, science, stories)
     hook_pattern_hits = sum(1 for pat in _VIRAL_HOOK_PATTERNS if re.search(pat, clip_text, re.I))
-    number_hits = len(re.findall(r"\$\d[\d,\.]*|\b\d+(?:\.\d+)?%|\b\d+\s+(?:million|billion|thousand|years|days|hours|rules|steps|languages|things)\b", clip_text, re.I))
+    number_hits = len(re.findall(r"\$\d[\d,\.]*|\b\d+(?:\.\d+)?%|\b\d+\s+(?:million|billion|thousand|years|days|hours|rules|steps|languages|things|dollars|bucks|frames|fps|games|people)\b", clip_text, re.I))
     impact_words = len(re.findall(
         r"\b(?:truth|secret|never|always|mistake|warning|problem|changed|million|billion|wealth|money|invest|dividend|"
         r"freedom|prison|jail|arrest|war|fear|danger|broke|quit|survive|matrix|system|power|rule|formula|discipline|"
-        r"marriage|divorce|family|mother|father|death|died|built|company|profit|success)\b",
+        r"marriage|divorce|family|mother|father|death|died|built|company|profit|success|"
+        r"future|price|cost|painful|critical|performance|hardware|software|breakthrough|hardest|biggest|crazy|impossible|"
+        r"design|decision|challenge|vision|opportunity|industry|gamers|players|customers|users|experience|open|control|"
+        r"important|different|better|excited|surprised|honest|strategy|product|category|pc|console|mobile|game|games)\b",
         lower,
     ))
-    contrast_turns = len(re.findall(r"\b(?:because|instead|however|realized|discovered|suddenly|truth is|problem is|reason is|formula is)\b", lower))
+    contrast_turns = len(re.findall(r"\b(?:because|instead|however|realized|discovered|suddenly|actually|basically|truth is|problem is|reason is|formula is|if you look|the thing is)\b", lower))
 
-    best_sent = _pick_crux_sentence(selected_sents)
-    crux_clean = not _is_incomplete_end(best_sent) and not best_sent.text.strip().endswith("?") and len(best_sent.text.split()) >= 5
+    best_sent = _pick_crux_sentence(selected_sents, has_punctuation=has_punct)
+    crux_clean = (
+        (not has_punct or not _is_incomplete_end(best_sent, has_punctuation=True))
+        and not best_sent.text.strip().endswith("?")
+        and len(best_sent.text.split()) >= 5
+    )
 
     # Require genuine viral substance (at least one strong viral signal + clean crux quote)
     viral_signal_strength = hook_pattern_hits * 12 + number_hits * 10 + min(6, impact_words) * 5 + min(4, contrast_turns) * 5
@@ -395,11 +421,11 @@ def evaluate_viral_potential(
         return False, ScoreBreakdown(emotional_peak=62, quotable_statement=60, humor_payoff=55, self_contained=62, clean_boundaries=65)
 
     penalty = int(round(filler_ratio * 220)) + visual_prop_hits * 12
-    emo = max(55, min(98, 68 + min(5, impact_words) * 4 + contrast_turns * 3 + (4 if "!" in clip_text else 0) - penalty))
-    quo = max(55, min(99, 70 + hook_pattern_hits * 8 + number_hits * 6 + min(4, impact_words) * 2 - penalty))
-    hum = max(55, min(94, 65 + contrast_turns * 5 + hook_pattern_hits * 4 - penalty))
-    self_c = max(55, min(98, (92 if starts_clean else 78) - visual_prop_hits * 15 - int(round(filler_ratio * 150))))
-    bounds = max(55, min(99, (95 if (starts_clean and ends_clean) else (80 if ends_clean else 64))))
+    emo = max(55, min(98, 70 + min(5, impact_words) * 4 + contrast_turns * 3 + (4 if "!" in clip_text else 0) - penalty))
+    quo = max(55, min(99, 72 + hook_pattern_hits * 8 + number_hits * 6 + min(4, impact_words) * 3 - penalty))
+    hum = max(55, min(94, 67 + contrast_turns * 5 + hook_pattern_hits * 4 - penalty))
+    self_c = max(55, min(98, (92 if starts_clean else 82) - visual_prop_hits * 15 - int(round(filler_ratio * 150))))
+    bounds = max(55, min(99, (95 if (starts_clean and ends_clean) else (84 if (ends_clean or not has_punct) else 66))))
 
     return True, ScoreBreakdown(
         emotional_peak=emo,
@@ -596,6 +622,7 @@ def find_best_moments(
         return []
 
     raw_candidates: List[ClipCandidate] = []
+    has_punct = _transcript_has_punctuation(transcript.sentences)
     max_cap = 15 if config.moments.max_candidates <= 0 else max(1, min(15, config.moments.max_candidates))
     min_viral_score = int(getattr(config.moments, "min_viral_score", 78))
 
@@ -629,11 +656,11 @@ def find_best_moments(
             s_start, s_end, selected_sents = snapped
             clip_text = " ".join(re.sub(r"^>>\s*", "", s.text).strip() for s in selected_sents).strip()
 
-            viable, content_bd = evaluate_viral_potential(selected_sents, clip_text)
+            viable, content_bd = evaluate_viral_potential(selected_sents, clip_text, has_punctuation=has_punct)
             if not viable:
                 continue
 
-            best_sent = _pick_crux_sentence(selected_sents)
+            best_sent = _pick_crux_sentence(selected_sents, has_punctuation=has_punct)
             base_score = compute_weighted_score(content_bd, config)
             score = min(98, base_score + int(round(h_val * 6)))
             p_start, p_end = _snap_peak_to_words(
@@ -707,7 +734,7 @@ def find_best_moments(
             s_start, s_end, selected_sents = snapped
             clip_text = " ".join(re.sub(r"^>>\s*", "", s.text).strip() for s in selected_sents).strip()
 
-            viable, content_bd = evaluate_viral_potential(selected_sents, clip_text)
+            viable, content_bd = evaluate_viral_potential(selected_sents, clip_text, has_punctuation=has_punct)
             if not viable:
                 continue
 
@@ -731,7 +758,7 @@ def find_best_moments(
             hm_val = _heatmap_boost_for_span(s_start, s_end, metadata.heatmap)
             score = min(98, int(round(base_score + hm_val * 6)))
 
-            best_sent = _pick_crux_sentence(selected_sents)
+            best_sent = _pick_crux_sentence(selected_sents, has_punctuation=has_punct)
             raw_p_start = float(item.get("peak_start", best_sent.start))
             raw_p_end = float(item.get("peak_end", raw_p_start + 3.0))
             p_start, p_end = _snap_peak_to_words(
@@ -777,9 +804,10 @@ def find_best_moments(
     for cand in raw_candidates:
         if any(_overlap_ratio(cand.start, cand.end, kept.start, kept.end) > 0.25 for kept in deduped):
             continue
-        # Quality over quantity: only include clips that meet min_viral_score (while ensuring at least 1 clip on tiny fixtures)
-        if cand.score < min_viral_score and len(deduped) >= 1:
-            continue
+        # Quality over quantity: only include clips meeting min_viral_score (with a graceful >=72 floor for top picks on calmer technical interviews)
+        if cand.score < min_viral_score and (len(deduped) >= 5 or cand.score < 72):
+            if len(deduped) >= 1:
+                continue
         cand.id = f"clip_{len(deduped) + 1:02d}"
         deduped.append(cand)
         if len(deduped) >= max_cap:

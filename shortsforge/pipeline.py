@@ -145,14 +145,16 @@ def run_new_project(
             on_progress(f"[2/4] Transcript ready: {len(transcript.words)} words, {len(transcript.sentences)} sentences.")
         progress.advance(t_trans)
 
-        candidates: List[ClipCandidate]
+        candidates: List[ClipCandidate] = []
         if not force and "hooks" in state.completed_steps and workspace.candidates_path.exists():
-            candidates = _load_candidates(workspace)
-            t_mom = progress.add_task("3/4 Loaded cached candidate clips & quality checks", total=1)
-            progress.advance(t_mom)
-            t_hooks = progress.add_task("4/4 Loaded cached verified hooks", total=1)
-            progress.advance(t_hooks)
-        else:
+            cached_cands = _load_candidates(workspace)
+            if cached_cands:
+                candidates = cached_cands
+                t_mom = progress.add_task("3/4 Loaded cached candidate clips & quality checks", total=1)
+                progress.advance(t_mom)
+                t_hooks = progress.add_task("4/4 Loaded cached verified hooks", total=1)
+                progress.advance(t_hooks)
+        if not candidates:
             t_mom = progress.add_task("3/4 Finding best moments & checking video/audio quality...", total=2)
             if on_progress:
                 cap_val = max(1, min(15, config.moments.max_candidates or 15))

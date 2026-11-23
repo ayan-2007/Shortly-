@@ -19,6 +19,43 @@ def test_auto_detect_person_preserves_initial_capital_and_apostrophe() -> None:
     detected = auto_detect_person_from_title(title, "The Diary Of A CEO", "")
     assert detected == "Kevin O'Leary"
 
+    title2 = "Gabe Newell Talks Steam Deck's Origin, Goals, and Future"
+    assert auto_detect_person_from_title(title2, "IGN", "") == "Gabe Newell"
+
+
+def test_unpunctuated_youtube_auto_captions_still_discover_viral_clips() -> None:
+    """YouTube auto-captions are lowercase without punctuation; moment discovery must still find viral clips."""
+    cfg = AppConfig()
+    cfg.llm.provider = "mock"
+    raw_lines = [
+        (10.0, 22.0, "we built this handheld gaming pc because nobody believed portable hardware could run every modern game"),
+        (22.0, 34.0, "the hardest decision was hitting the 399 price point while keeping performance high for players"),
+        (34.0, 48.0, "it was painful to reach that cost target but critical for the future of open pc gaming platforms"),
+        (48.0, 62.0, "if you have game pass or another store you can install anything because customers should own their device"),
+        (62.0, 76.0, "that open philosophy changed everything about how developers design software and hardware together"),
+    ]
+    sents = []
+    words = []
+    for idx, (st, en, txt) in enumerate(raw_lines):
+        toks = txt.split()
+        step = (en - st) / len(toks)
+        sw = [WordTimestamp(word=w, start=round(st + i * step, 2), end=round(st + (i + 1) * step, 2)) for i, w in enumerate(toks)]
+        words.extend(sw)
+        sents.append(Sentence(index=idx, text=txt, start=st, end=en, speaker="SPEAKER_1", words=sw))
+
+    tr = Transcript(language="en", duration=80.0, sentences=sents, words=words)
+    meta = VideoMetadata(
+        source="https://youtu.be/demo1234567",
+        source_type="url",
+        title="Gabe Newell Talks Steam Deck's Origin, Goals, and Future",
+        channel="IGN",
+        duration=80.0,
+        heatmap=[{"start_time": 18.0, "end_time": 45.0, "value": 0.92}],
+    )
+    cands = find_best_moments(tr, meta, "Gabe Newell", LLMClient(cfg), cfg)
+    assert len(cands) >= 1
+    assert cands[0].score >= 78
+
 
 def test_format_selector_preserves_high_res_for_long_videos() -> None:
     cfg = AppConfig()

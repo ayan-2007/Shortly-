@@ -126,7 +126,7 @@ def auto_detect_person_from_title(title: str, channel: str = "", description: st
     name_tok = r"[A-Z](?:[a-z]+|'[A-Z][a-z]+)(?:-[A-Z][a-z]+)?"
     patterns = [
         rf"\bwith\s+({name_tok}(?:\s+{name_tok}){{1,2}})\b",
-        rf"^({name_tok}(?:\s+{name_tok}){{1,2}})(?:'s|[:\-]|\s+(?:Speaks|Opens|Explains|Reveals|Breaks|Interview|Every|How|Why|On)\b)",
+        rf"^({name_tok}(?:\s+{name_tok}){{1,2}})(?:'s|[:\-]|\s+(?:Speaks|Talks|Discusses|Shares|Answers|Reacts|Opens|Explains|Reveals|Breaks|Interview|Every|How|Why|On)\b)",
         rf"Interview\s+With\s+({name_tok}(?:\s+{name_tok}){{1,2}})\b",
     ]
     for pat in patterns:
