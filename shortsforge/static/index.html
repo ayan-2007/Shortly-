@@ -1141,20 +1141,21 @@
   }
   .card-actions button { flex: 1; }
 
-  /* === Outputs Player Cards === */
+  /* === Outputs Player Cards & Live Runtime Video Editor === */
   .output-card {
     background: var(--glass-panel-strong);
     backdrop-filter: blur(22px);
     border: 1px solid var(--glass-border);
     border-radius: 18px;
     padding: 20px;
-    margin-bottom: 20px;
+    margin-bottom: 22px;
     display: grid;
-    grid-template-columns: 292px 1fr;
+    grid-template-columns: 310px 1fr;
     gap: 24px;
     box-shadow: 0 18px 46px rgba(6, 12, 24, 0.42);
   }
   .video-shell {
+    position: relative;
     background: #060910;
     border-radius: 16px;
     overflow: hidden;
@@ -1162,7 +1163,209 @@
     aspect-ratio: 9 / 16;
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
   }
-  .video-shell video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .video-shell video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    transition: filter 0.18s ease, transform 0.18s ease;
+  }
+  .live-preview-badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    z-index: 6;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.88);
+    border: 1px solid rgba(200, 75, 255, 0.75);
+    color: #F3E8FF;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    pointer-events: none;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  }
+  .live-preview-badge.active { display: inline-flex; }
+
+  /* Live On-Video White Box Center Attention Card Preview */
+  .live-attn-overlay {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    z-index: 5;
+    display: none;
+    justify-content: center;
+    pointer-events: none;
+    transform: translateY(-50%);
+    transition: top 0.18s ease, opacity 0.18s ease;
+  }
+  .live-attn-overlay.active { display: flex; }
+  .live-attn-overlay.pos-center { top: 46%; }
+  .live-attn-overlay.pos-center-offset { top: 36%; }
+  .live-attn-overlay.pos-upper { top: 24%; }
+  .live-attn-overlay.pos-lower { top: 70%; }
+
+  .live-attn-box {
+    background: rgba(255, 255, 255, 0.97);
+    color: #0E1016;
+    border-radius: 12px;
+    padding: 11px 15px 10px;
+    text-align: center;
+    font-family: "Plus Jakarta Sans", "Inter", sans-serif;
+    font-weight: 800;
+    font-size: 13.5px;
+    line-height: 1.28;
+    letter-spacing: -0.01em;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.58);
+    border: 1.5px solid rgba(226, 232, 240, 0.95);
+    max-width: 94%;
+    word-break: break-word;
+  }
+  .live-attn-box .attn-bar {
+    width: 46px;
+    height: 3.5px;
+    border-radius: 99px;
+    background: #8A22E2;
+    margin: 0 auto 6px;
+  }
+  .live-attn-box.style-white_pill {
+    border-radius: 999px;
+    padding: 8px 16px;
+    font-size: 12.5px;
+  }
+  .live-attn-box.style-white_pill .attn-bar { display: none; }
+  .live-attn-box.style-dark_neon {
+    background: rgba(14, 16, 26, 0.95);
+    color: #FFFFFF;
+    border: 2px solid #C04BFF;
+    box-shadow: 0 0 18px rgba(192, 75, 255, 0.4), 0 10px 24px rgba(0, 0, 0, 0.6);
+  }
+  .live-attn-box.style-dark_neon .attn-bar { background: #D876FF; }
+
+  /* Live On-Video Caption Position Guide */
+  .live-cap-guide {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    z-index: 5;
+    display: none;
+    justify-content: center;
+    pointer-events: none;
+    transform: translateY(-50%);
+    transition: top 0.18s ease;
+  }
+  .live-cap-guide.active { display: flex; }
+  .live-cap-guide.pos-bottom { top: 78%; }
+  .live-cap-guide.pos-lower_mid { top: 65%; }
+  .live-cap-guide.pos-center { top: 50%; }
+  .live-cap-guide.pos-upper_mid { top: 35%; }
+  .live-cap-guide.pos-top { top: 22%; }
+  .live-cap-pill {
+    padding: 6px 14px;
+    border-radius: 10px;
+    background: rgba(16, 10, 28, 0.86);
+    border: 1.5px dashed #C84BFF;
+    color: #F5D0FE;
+    font-weight: 800;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+  }
+
+  /* Post-Render Editor Panel inside each Output Card */
+  .clip-editor-box {
+    background: linear-gradient(135deg, rgba(16, 26, 44, 0.90), rgba(26, 19, 44, 0.86));
+    border: 1px solid rgba(200, 75, 255, 0.34);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 8px 24px rgba(5, 10, 20, 0.35);
+  }
+  .clip-editor-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 11px;
+    padding-bottom: 9px;
+    border-bottom: 1px solid rgba(251, 243, 231, 0.10);
+  }
+  .clip-editor-title {
+    font-size: 12.5px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #E9D5FF;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .filter-pills-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 11px;
+  }
+  .filter-pill-btn {
+    padding: 5px 11px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    background: rgba(11, 18, 30, 0.78);
+    color: var(--text-soft);
+    border: 1px solid rgba(251, 243, 231, 0.14);
+  }
+  .filter-pill-btn:hover {
+    border-color: rgba(34, 155, 240, 0.55);
+    color: #fff;
+  }
+  .filter-pill-btn.active {
+    background: linear-gradient(135deg, rgba(200, 75, 255, 0.30), rgba(34, 155, 240, 0.28));
+    border-color: #C84BFF;
+    color: #FFFFFF;
+    box-shadow: 0 0 12px rgba(200, 75, 255, 0.28);
+  }
+  .editor-controls-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+    gap: 9px;
+    align-items: end;
+  }
+  .attn-editor-row {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(251, 243, 231, 0.09);
+    display: grid;
+    grid-template-columns: auto 1fr auto auto auto;
+    gap: 8px;
+    align-items: center;
+  }
+  @media (max-width: 1150px) {
+    .attn-editor-row { grid-template-columns: 1fr 1fr; }
+  }
+  .attn-input {
+    width: 100%;
+    padding: 8px 11px;
+    border-radius: 9px;
+    border: 1px solid rgba(251, 243, 231, 0.18);
+    background: rgba(8, 13, 23, 0.88);
+    color: #fff;
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .attn-input:focus {
+    outline: none;
+    border-color: #C84BFF;
+  }
   .meta-block { margin-bottom: 14px; }
   .meta-block h4 {
     margin: 0 0 6px;
@@ -1617,14 +1820,59 @@ async function loadProjectsList() {
   renderSidebar();
 }
 
+const LIVE_FILTER_CSS_MAP = {
+  cinematic_grade: "contrast(1.09) saturate(1.15) brightness(1.02)",
+  sharp_hd: "contrast(1.06) brightness(1.01) saturate(1.04)",
+  denoise_clean: "brightness(1.02) contrast(1.02) saturate(1.03)",
+  warm_studio: "sepia(0.15) saturate(1.16) contrast(1.05) brightness(1.01)",
+  vibrant_pop: "contrast(1.13) saturate(1.30) brightness(1.03)",
+  cool_documentary: "hue-rotate(-8deg) contrast(1.11) saturate(0.92)",
+  bw_noir: "grayscale(1) contrast(1.24) brightness(1.02)",
+};
+
+const FILTER_OPTIONS_HTML = `
+  <option value="">None (Original)</option>
+  <option value="cinematic_grade">Cinematic Color &amp; Contrast</option>
+  <option value="sharp_hd">Crisp HD Detail &amp; Sharpen</option>
+  <option value="warm_studio">Warm Studio &amp; Vignette</option>
+  <option value="vibrant_pop">Vibrant Viral Pop</option>
+  <option value="denoise_clean">Studio Denoise &amp; Cleanup</option>
+  <option value="cool_documentary">Cool Documentary Grade</option>
+  <option value="bw_noir">High-Contrast B&amp;W Noir</option>
+`;
+
+const CAPTION_POSITION_OPTIONS_HTML = `
+  <option value="bottom">Bottom (Default Lower-Third)</option>
+  <option value="center">Exact Center (Middle of Screen)</option>
+  <option value="lower_mid">Lower-Middle</option>
+  <option value="upper_mid">Upper-Middle</option>
+  <option value="top">Top Safe Zone</option>
+`;
+
 function loadPrefs() {
   try {
     return Object.assign(
-      { preset: "iman", color: "purple", filter1: "", filter2: "", mirror: false, maxClips: "15" },
+      {
+        preset: "iman",
+        color: "purple",
+        position: "bottom",
+        filter1: "",
+        filter2: "",
+        mirror: false,
+        maxClips: "12",
+      },
       JSON.parse(localStorage.getItem("shortly_prefs_v1") || "{}")
     );
   } catch (_) {
-    return { preset: "iman", color: "purple", filter1: "", filter2: "", mirror: false, maxClips: "15" };
+    return {
+      preset: "iman",
+      color: "purple",
+      position: "bottom",
+      filter1: "",
+      filter2: "",
+      mirror: false,
+      maxClips: "12",
+    };
   }
 }
 
@@ -1796,7 +2044,7 @@ function startHeroWordRotation() {
 
 function renderNewProjectView() {
   document.getElementById("view-title").textContent = "Shortly Studio";
-  document.getElementById("view-sub").textContent = "Paste a YouTube link or local video — Shortly isolates only high-retention viral Shorts automatically.";
+  document.getElementById("view-sub").textContent = "Paste a YouTube link or local video — Shortly isolates balanced viral Shorts with Neural Face Tracking & Live Post-Render Editing.";
   document.getElementById("project-tabs").style.display = "none";
 
   document.getElementById("content").innerHTML = `
@@ -1806,7 +2054,7 @@ function renderNewProjectView() {
       <div class="hero-pill">
         <img src="/static/shortly-pulse.png" alt="Shortly Pulse" />
         <span class="pill-dot"></span>
-        <span>Quality Over Quantity &bull; Max 15 Viral Clips &bull; Kinetic Captions</span>
+        <span>Neural Face Tracking &bull; Balanced 8–12 Viral Clips &bull; Live Post-Render Editor</span>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
       </div>
 
@@ -1822,7 +2070,7 @@ function renderNewProjectView() {
       </h1>
 
       <p class="hero-sub">
-        Drop any podcast, interview, or local video. Shortly filters out filler, cuts only complete viral moments, burns crisp neon-purple Iman Gadzhi &amp; Hormozi animated captions with zero cluttered intro titles, and applies your mirror &amp; studio quality filters in one click.
+        Drop any podcast, interview, or local video. Shortly tracks active speaker faces in 9:16, finds the sweet-spot viral moments, and gives you a built-in post-render video editor to preview filters live, position captions (Center or Bottom), and add a White Center Attention Box Card.
       </p>
 
       <div class="studio-dock">
@@ -1847,7 +2095,7 @@ function renderNewProjectView() {
 
         <div class="opts-divider"></div>
 
-        <div class="quick-opts">
+        <div class="quick-opts" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
           <div class="opt-field">
             <label for="f-cap-preset">Caption Style</label>
             <select id="f-cap-preset">
@@ -1868,61 +2116,54 @@ function renderNewProjectView() {
             </select>
           </div>
           <div class="opt-field">
-            <label for="f-max-clips">Max Viral Clips (Cap 15)</label>
+            <label for="f-cap-position">Initial Caption Position</label>
+            <select id="f-cap-position">
+              ${CAPTION_POSITION_OPTIONS_HTML}
+            </select>
+          </div>
+          <div class="opt-field">
+            <label for="f-max-clips">Target Viral Clips (Balanced)</label>
             <select id="f-max-clips">
-              <option value="15" selected>Up to 15 (Max Cap)</option>
+              <option value="12" selected>8–12 Clips (Sweet Spot)</option>
               <option value="10">Up to 10 Viral Clips</option>
+              <option value="8">Up to 8 Viral Clips</option>
               <option value="5">Up to 5 Top Picks</option>
-              <option value="3">Up to 3 Elite Only</option>
-            </select>
-          </div>
-          <div class="opt-field">
-            <label for="f-filter-1">Quality Filter 1</label>
-            <select id="f-filter-1">
-              <option value="" selected>None</option>
-              <option value="sharp_hd">Crisp HD Detail &amp; Sharpen</option>
-              <option value="cinematic_grade">Cinematic Color &amp; Contrast</option>
-              <option value="denoise_clean">Studio Denoise &amp; Cleanup</option>
-              <option value="warm_studio">Warm Studio &amp; Vignette</option>
-            </select>
-          </div>
-          <div class="opt-field">
-            <label for="f-filter-2">Quality Filter 2</label>
-            <select id="f-filter-2">
-              <option value="" selected>None</option>
-              <option value="cinematic_grade">Cinematic Color &amp; Contrast</option>
-              <option value="sharp_hd">Crisp HD Detail &amp; Sharpen</option>
-              <option value="denoise_clean">Studio Denoise &amp; Cleanup</option>
-              <option value="warm_studio">Warm Studio &amp; Vignette</option>
+              <option value="15">Up to 15 (Max Cap)</option>
             </select>
           </div>
         </div>
 
         <div class="quick-toggles">
           <div class="toggle-group">
+            <label class="toggle-chip is-on" id="f-facetrack-chip">
+              <input type="checkbox" id="f-face-tracking" checked />
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/></svg>
+              Smart Active-Speaker Face Tracking
+              <span class="toggle-state" id="f-facetrack-state">ON</span>
+            </label>
             <label class="toggle-chip" id="f-mirror-chip">
               <input type="checkbox" id="f-mirror-video" />
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3"/><path d="M12 20v2"/><path d="M12 14v2"/><path d="M12 8v2"/><path d="M12 2v2"/></svg>
-              Mirror Video (Horizontal Flip)
+              Mirror Video
               <span class="toggle-state" id="f-mirror-state">OFF</span>
             </label>
           </div>
-          <span style="font-size:11.5px; color:var(--muted);">Neon-purple captions &bull; No intro title overlay &bull; Pure voice audio</span>
+          <span style="font-size:11.5px; color:var(--muted);">Preview &amp; apply Filters, Caption Position &amp; Center White Box after rendering!</span>
         </div>
       </div>
 
       <div class="feature-strip">
         <div class="feature-card">
-          <div class="ft-head"><span class="ft-dot"></span>Quality Over Quantity</div>
-          <p>Strict viral scoring capped at 15 clips max — skips boring chatter and keeps only scroll-stopping moments.</p>
+          <div class="ft-head"><span class="ft-dot"></span>Neural Active-Speaker Face Tracking</div>
+          <p>Tracks speaker faces dynamically in 9:16 portrait and snaps cleanly on podcast camera angle cuts.</p>
         </div>
         <div class="feature-card">
-          <div class="ft-head"><span class="ft-dot"></span>Neon Purple Kinetic Captions</div>
-          <p>Clean Iman Gadzhi &amp; Hormozi word-by-word neon purple captions with zero cluttered opening title text.</p>
+          <div class="ft-head"><span class="ft-dot"></span>Runtime Filter &amp; Caption Editor</div>
+          <p>After your video renders, preview filters in real-time and move captions between Bottom, Center, or Top.</p>
         </div>
         <div class="feature-card">
-          <div class="ft-head"><span class="ft-dot"></span>Mirror &amp; Dual Filters</div>
-          <p>Toggle horizontal video mirroring plus up to 2 studio quality enhancement filters in a single fast pass.</p>
+          <div class="ft-head"><span class="ft-dot"></span>Center White Attention Box Card</div>
+          <p>Add a viral white box in the center of any rendered Short with custom attention-grabbing text in one click.</p>
         </div>
       </div>
     </section>
@@ -1932,11 +2173,18 @@ function renderNewProjectView() {
   bindJobBannerActions();
 
   const prefs = loadPrefs();
-  document.getElementById("f-cap-preset").value = prefs.preset;
-  document.getElementById("f-cap-color").value = prefs.color;
-  document.getElementById("f-max-clips").value = prefs.maxClips;
-  document.getElementById("f-filter-1").value = prefs.filter1;
-  document.getElementById("f-filter-2").value = prefs.filter2;
+  document.getElementById("f-cap-preset").value = prefs.preset || "iman";
+  document.getElementById("f-cap-color").value = prefs.color || "purple";
+  document.getElementById("f-cap-position").value = prefs.position || "bottom";
+  document.getElementById("f-max-clips").value = prefs.maxClips || "12";
+
+  const ftCb = document.getElementById("f-face-tracking");
+  const ftChip = document.getElementById("f-facetrack-chip");
+  const ftState = document.getElementById("f-facetrack-state");
+  ftCb.addEventListener("change", () => {
+    ftChip.classList.toggle("is-on", ftCb.checked);
+    ftState.textContent = ftCb.checked ? "ON" : "OFF";
+  });
 
   const mirrorCb = document.getElementById("f-mirror-video");
   const mirrorChip = document.getElementById("f-mirror-chip");
@@ -1948,12 +2196,11 @@ function renderNewProjectView() {
   const persistHomePrefs = () => savePrefs({
     preset: document.getElementById("f-cap-preset").value,
     color: document.getElementById("f-cap-color").value,
+    position: document.getElementById("f-cap-position").value,
     maxClips: document.getElementById("f-max-clips").value,
-    filter1: document.getElementById("f-filter-1").value,
-    filter2: document.getElementById("f-filter-2").value,
     mirror: mirrorCb.checked,
   });
-  ["f-cap-preset", "f-cap-color", "f-max-clips", "f-filter-1", "f-filter-2"].forEach(id => {
+  ["f-cap-preset", "f-cap-color", "f-cap-position", "f-max-clips"].forEach(id => {
     document.getElementById(id).addEventListener("change", persistHomePrefs);
   });
   mirrorCb.addEventListener("change", () => {
@@ -1978,19 +2225,17 @@ function renderNewProjectView() {
     }
     try {
       const rawMax = parseInt(document.getElementById("f-max-clips").value, 10);
-      const selectedFilters = [
-        document.getElementById("f-filter-1").value,
-        document.getElementById("f-filter-2").value,
-      ].filter(Boolean);
       const job = await apiPost("/api/jobs/autopilot", {
         source: src,
         caption_preset: document.getElementById("f-cap-preset").value,
         active_color: document.getElementById("f-cap-color").value,
-        max_clips: Number.isNaN(rawMax) ? 15 : Math.min(15, Math.max(1, rawMax)),
+        caption_position: document.getElementById("f-cap-position").value,
+        max_clips: Number.isNaN(rawMax) ? 12 : Math.min(15, Math.max(1, rawMax)),
         hook_enabled: false,
         show_opening_title: false,
+        face_tracking_enabled: ftCb.checked,
         mirror_video: document.getElementById("f-mirror-video").checked,
-        video_filters: selectedFilters,
+        video_filters: [],
       });
       startPollingJob(job);
     } catch (e) { showToast(e.message); }
@@ -2051,7 +2296,7 @@ function renderReviewTab(p) {
     ${renderJobBannerHtml()}
     <div class="enhance-panel">
       <div class="enhance-panel-head">
-        <div class="enhance-panel-title"><span class="neon-dot"></span>Mirror, Quality Filters &amp; Caption Studio</div>
+        <div class="enhance-panel-title"><span class="neon-dot"></span>Caption Position, Face Tracking &amp; Render Studio</div>
         <button class="shiny-cta shiny-coral" id="btn-render-approved" type="button" style="padding:0.72rem 1.45rem; font-size:0.88rem;">
           <span>Render Approved Shorts &rarr;</span>
         </button>
@@ -2077,23 +2322,21 @@ function renderReviewTab(p) {
           </select>
         </div>
         <div class="opt-field">
+          <label for="r-cap-position">Caption Position</label>
+          <select id="r-cap-position">
+            ${CAPTION_POSITION_OPTIONS_HTML}
+          </select>
+        </div>
+        <div class="opt-field">
           <label for="r-filter-1">Quality Filter 1</label>
           <select id="r-filter-1">
-            <option value="">None</option>
-            <option value="sharp_hd">Crisp HD Detail &amp; Sharpen</option>
-            <option value="cinematic_grade">Cinematic Color &amp; Contrast</option>
-            <option value="denoise_clean">Studio Denoise &amp; Cleanup</option>
-            <option value="warm_studio">Warm Studio &amp; Vignette</option>
+            ${FILTER_OPTIONS_HTML}
           </select>
         </div>
         <div class="opt-field">
           <label for="r-filter-2">Quality Filter 2</label>
           <select id="r-filter-2">
-            <option value="">None</option>
-            <option value="cinematic_grade">Cinematic Color &amp; Contrast</option>
-            <option value="sharp_hd">Crisp HD Detail &amp; Sharpen</option>
-            <option value="denoise_clean">Studio Denoise &amp; Cleanup</option>
-            <option value="warm_studio">Warm Studio &amp; Vignette</option>
+            ${FILTER_OPTIONS_HTML}
           </select>
         </div>
         <label class="toggle-chip" id="r-mirror-chip" style="justify-content:space-between; height:36px;">
@@ -2110,10 +2353,11 @@ function renderReviewTab(p) {
 
   bindJobBannerActions();
   const rPrefs = loadPrefs();
-  document.getElementById("r-cap-preset").value = rPrefs.preset;
-  document.getElementById("r-cap-color").value = rPrefs.color;
-  document.getElementById("r-filter-1").value = rPrefs.filter1;
-  document.getElementById("r-filter-2").value = rPrefs.filter2;
+  document.getElementById("r-cap-preset").value = rPrefs.preset || "iman";
+  document.getElementById("r-cap-color").value = rPrefs.color || "purple";
+  document.getElementById("r-cap-position").value = rPrefs.position || "bottom";
+  document.getElementById("r-filter-1").value = rPrefs.filter1 || "";
+  document.getElementById("r-filter-2").value = rPrefs.filter2 || "";
 
   const rMirrorCb = document.getElementById("r-mirror-video");
   const rMirrorChip = document.getElementById("r-mirror-chip");
@@ -2124,11 +2368,12 @@ function renderReviewTab(p) {
   const persistRevPrefs = () => savePrefs({
     preset: document.getElementById("r-cap-preset").value,
     color: document.getElementById("r-cap-color").value,
+    position: document.getElementById("r-cap-position").value,
     filter1: document.getElementById("r-filter-1").value,
     filter2: document.getElementById("r-filter-2").value,
     mirror: rMirrorCb.checked,
   });
-  ["r-cap-preset", "r-cap-color", "r-filter-1", "r-filter-2"].forEach(id => {
+  ["r-cap-preset", "r-cap-color", "r-cap-position", "r-filter-1", "r-filter-2"].forEach(id => {
     document.getElementById(id).addEventListener("change", persistRevPrefs);
   });
   rMirrorCb.addEventListener("change", () => {
@@ -2205,6 +2450,7 @@ function renderReviewTab(p) {
         show_opening_title: false,
         caption_preset: document.getElementById("r-cap-preset").value,
         active_color: document.getElementById("r-cap-color").value,
+        caption_position: document.getElementById("r-cap-position").value,
         mirror_video: document.getElementById("r-mirror-video").checked,
         video_filters: rFilters,
       });
@@ -2220,15 +2466,15 @@ function renderOutputsTab(p) {
     <div class="enhance-panel">
       <div class="enhance-panel-head">
         <div>
-          <div class="enhance-panel-title"><span class="neon-dot"></span>Mirror, Quality Filters &amp; Neon Purple Captions</div>
+          <div class="enhance-panel-title"><span class="neon-dot"></span>Batch Post-Render Studio (Apply to All Shorts)</div>
           <div style="font-size:12px; color:var(--muted); margin-top:4px;">
-            Apply horizontal mirroring, up to 2 studio enhancement filters, or re-render with Neon Purple captions (no intro title overlay).
+            Use the <b style="color:var(--cream);">Live Video Editor</b> on each rendered Short below to preview filters in real-time, move captions (Center or Bottom), or add a White Center Attention Box — or batch-apply below.
           </div>
         </div>
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <button class="btn-secondary" id="btn-open-out" type="button">Open Output Folder</button>
           <button class="shiny-cta shiny-coral" id="btn-rerender-outputs" type="button" style="padding:0.70rem 1.4rem; font-size:0.86rem;">
-            <span>Re-Render with Effects &rarr;</span>
+            <span>Batch Apply to All Shorts &rarr;</span>
           </button>
         </div>
       </div>
@@ -2253,23 +2499,21 @@ function renderOutputsTab(p) {
           </select>
         </div>
         <div class="opt-field">
+          <label for="o-cap-position">Caption Position</label>
+          <select id="o-cap-position">
+            ${CAPTION_POSITION_OPTIONS_HTML}
+          </select>
+        </div>
+        <div class="opt-field">
           <label for="o-filter-1">Quality Filter 1</label>
           <select id="o-filter-1">
-            <option value="">None</option>
-            <option value="sharp_hd">Crisp HD Detail &amp; Sharpen</option>
-            <option value="cinematic_grade">Cinematic Color &amp; Contrast</option>
-            <option value="denoise_clean">Studio Denoise &amp; Cleanup</option>
-            <option value="warm_studio">Warm Studio &amp; Vignette</option>
+            ${FILTER_OPTIONS_HTML}
           </select>
         </div>
         <div class="opt-field">
           <label for="o-filter-2">Quality Filter 2</label>
           <select id="o-filter-2">
-            <option value="">None</option>
-            <option value="cinematic_grade">Cinematic Color &amp; Contrast</option>
-            <option value="sharp_hd">Crisp HD Detail &amp; Sharpen</option>
-            <option value="denoise_clean">Studio Denoise &amp; Cleanup</option>
-            <option value="warm_studio">Warm Studio &amp; Vignette</option>
+            ${FILTER_OPTIONS_HTML}
           </select>
         </div>
         <label class="toggle-chip" id="o-mirror-chip" style="justify-content:space-between; height:36px;">
@@ -2296,11 +2540,29 @@ function renderOutputsTab(p) {
       </div>
     `;
   } else {
-    bodyHtml += outputs.map(o => `
-      <div class="output-card">
+    bodyHtml += outputs.map(o => {
+      const cid = esc(o.clip_id);
+      const defaultCardText = o.attention_card_text || o.hook_text || "";
+      const posBadge = (o.caption_position || "bottom").toUpperCase().replace("_", " ");
+      const activeFiltersList = (o.video_filters || []).filter(Boolean);
+      return `
+      <div class="output-card" id="out-card-${cid}">
         <div>
-          <div class="video-shell">
-            <video controls preload="metadata" poster="${esc(o.thumbnail_url)}" src="${esc(o.video_url)}"></video>
+          <div class="video-shell" id="shell-${cid}">
+            <div class="live-preview-badge" id="live-badge-${cid}">
+              <span class="neon-dot" style="width:7px;height:7px;"></span>
+              <span id="live-badge-txt-${cid}">Live Preview — Click Save to Bake</span>
+            </div>
+            <div class="live-attn-overlay pos-${esc(o.attention_card_position || "center")}" id="live-attn-${cid}">
+              <div class="live-attn-box style-${esc(o.attention_card_style || "white_box")}" id="live-attn-box-${cid}">
+                <div class="attn-bar"></div>
+                <div id="live-attn-txt-${cid}">${esc(defaultCardText)}</div>
+              </div>
+            </div>
+            <div class="live-cap-guide pos-${esc(o.caption_position || "bottom")}" id="live-cap-guide-${cid}">
+              <div class="live-cap-pill" id="live-cap-pill-${cid}">Captions: ${esc(posBadge)}</div>
+            </div>
+            <video id="vid-${cid}" controls preload="metadata" poster="${esc(o.thumbnail_url)}" src="${esc(o.video_url)}"></video>
           </div>
           <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:12px; color:var(--muted);">
             <span>Viral Score: <b style="color:#FFD3C4;">${o.score}/100</b></span>
@@ -2312,10 +2574,127 @@ function renderOutputsTab(p) {
           </a>
         </div>
         <div>
-          <div style="margin-bottom:14px;">
-            <div style="font-size:16px; font-weight:800; color:var(--sky-bright);">${esc(o.clip_id.toUpperCase())} &mdash; ${esc(o.hook_text)} <span class="badge coral" style="margin-left:6px;">KINETIC CAPTIONS</span></div>
-            <div style="font-size:12px; color:var(--muted); margin-top:3px;">${esc(o.output_video)} &bull; ${fmtTime(o.start)}-${fmtTime(o.end)} (${Math.round((o.end || 0) - (o.start || 0))}s)</div>
+          <div style="margin-bottom:12px;">
+            <div style="font-size:16px; font-weight:800; color:var(--sky-bright); display:flex; align-items:center; gap:7px; flex-wrap:wrap;">
+              <span>${esc(o.clip_id.toUpperCase())} &mdash; ${esc(o.hook_text)}</span>
+              <span class="badge coral">CAPTIONS: ${esc(posBadge)}</span>
+              ${o.attention_card_enabled ? `<span class="badge green">WHITE BOX CARD: ON</span>` : ""}
+              ${activeFiltersList.length ? `<span class="badge sky">FILTERS: ${esc(activeFiltersList.join(" + "))}</span>` : ""}
+            </div>
+            <div style="font-size:12px; color:var(--muted); margin-top:3px;">${esc(o.output_video)} &bull; ${fmtTime(o.start)}-${fmtTime(o.end)} (${Math.round((o.end || 0) - (o.start || 0))}s) &bull; Active-Speaker Face Tracked</div>
           </div>
+
+          <!-- Post-Render Interactive Live Video Editor for this Short -->
+          <div class="clip-editor-box" data-clip-editor="${cid}">
+            <div class="clip-editor-head">
+              <div class="clip-editor-title">
+                <span class="neon-dot"></span>
+                Live Video Editor &mdash; Runtime Filters, Caption Position &amp; Center White Box
+              </div>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button class="btn-secondary" id="ed-reset-${cid}" type="button" style="padding:6px 12px; font-size:11.5px;">Reset Preview</button>
+                <button class="shiny-cta shiny-coral" id="ed-save-${cid}" type="button" style="padding:0.50rem 1.05rem; font-size:0.78rem;">
+                  <span>Apply &amp; Save to This Video &rarr;</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 1. Instant Click-to-Preview Filter Pills -->
+            <div style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); margin-bottom:5px;">
+              1. Click Filter to Preview Live on Video Player (Decide Before Saving)
+            </div>
+            <div class="filter-pills-row" id="ed-pills-${cid}">
+              <button type="button" class="filter-pill-btn" data-fpill="">Original (No Filter)</button>
+              <button type="button" class="filter-pill-btn" data-fpill="cinematic_grade">Cinematic Grade</button>
+              <button type="button" class="filter-pill-btn" data-fpill="sharp_hd">Crisp Sharp HD</button>
+              <button type="button" class="filter-pill-btn" data-fpill="warm_studio">Warm Studio</button>
+              <button type="button" class="filter-pill-btn" data-fpill="vibrant_pop">Vibrant Pop</button>
+              <button type="button" class="filter-pill-btn" data-fpill="denoise_clean">Studio Denoise</button>
+              <button type="button" class="filter-pill-btn" data-fpill="cool_documentary">Cool Documentary</button>
+              <button type="button" class="filter-pill-btn" data-fpill="bw_noir">B&amp;W Noir</button>
+            </div>
+
+            <!-- 2. Caption Position, Style, Color & Dual Filter Controls -->
+            <div class="editor-controls-grid">
+              <div class="opt-field">
+                <label for="ed-cappos-${cid}">2. Caption Position</label>
+                <select id="ed-cappos-${cid}">
+                  ${CAPTION_POSITION_OPTIONS_HTML}
+                </select>
+              </div>
+              <div class="opt-field">
+                <label for="ed-cappreset-${cid}">Caption Style</label>
+                <select id="ed-cappreset-${cid}">
+                  <option value="iman">Iman Gadzhi Kinetic</option>
+                  <option value="hormozi">Alex Hormozi Impact</option>
+                  <option value="documentary">Documentary Editorial</option>
+                  <option value="neon">Neon Bold</option>
+                  <option value="comic">Comic Punch</option>
+                  <option value="minimal">Clean Minimal</option>
+                </select>
+              </div>
+              <div class="opt-field">
+                <label for="ed-capcolor-${cid}">Caption Color</label>
+                <select id="ed-capcolor-${cid}">
+                  <option value="purple">Neon Purple</option>
+                  <option value="yellow">Luxury Gold / Yellow</option>
+                  <option value="red">Viral Crimson Red</option>
+                </select>
+              </div>
+              <div class="opt-field">
+                <label for="ed-f1-${cid}">Filter Layer 1</label>
+                <select id="ed-f1-${cid}">
+                  ${FILTER_OPTIONS_HTML}
+                </select>
+              </div>
+              <div class="opt-field">
+                <label for="ed-f2-${cid}">Filter Layer 2</label>
+                <select id="ed-f2-${cid}">
+                  ${FILTER_OPTIONS_HTML}
+                </select>
+              </div>
+              <label class="toggle-chip" id="ed-mirror-chip-${cid}" style="justify-content:space-between; height:35px; padding:5px 11px;">
+                <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;">
+                  <input type="checkbox" id="ed-mirror-${cid}" />
+                  Mirror
+                </span>
+                <span class="toggle-state" id="ed-mirror-state-${cid}">OFF</span>
+              </label>
+            </div>
+
+            <!-- 3. White Box in the Center with Attention-Grabbing Text -->
+            <div class="attn-editor-row">
+              <label class="toggle-chip" id="ed-attn-chip-${cid}" style="height:35px; padding:5px 12px;">
+                <input type="checkbox" id="ed-attn-on-${cid}" />
+                <span>3. Center White Box Card</span>
+                <span class="toggle-state" id="ed-attn-state-${cid}">OFF</span>
+              </label>
+              <input type="text" class="attn-input" id="ed-attn-txt-${cid}" value="${esc(defaultCardText)}" placeholder="Type attention-grabbing text for the white center box..." />
+              <div class="opt-field">
+                <select id="ed-attn-pos-${cid}" title="Card Position" style="height:35px;">
+                  <option value="center">Center of Screen</option>
+                  <option value="upper">Upper-Center</option>
+                  <option value="lower">Lower-Center</option>
+                </select>
+              </div>
+              <div class="opt-field">
+                <select id="ed-attn-dur-${cid}" title="Card Duration" style="height:35px;">
+                  <option value="4">First 4s (Intro)</option>
+                  <option value="7">First 7s</option>
+                  <option value="0">Entire Video</option>
+                  <option value="3">First 3s</option>
+                </select>
+              </div>
+              <div class="opt-field">
+                <select id="ed-attn-style-${cid}" title="Card Style" style="height:35px;">
+                  <option value="white_box">Classic White Box</option>
+                  <option value="white_pill">White Pill Badge</option>
+                  <option value="dark_neon">Dark Neon Box</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
           ${o.post_caption ? `
           <div class="meta-block">
             <h4>Ready-to-Post Social Caption <button class="copy-mini" data-copy="${esc(o.post_caption)}" type="button">Copy Caption</button></h4>
@@ -2341,7 +2720,8 @@ function renderOutputsTab(p) {
           </div>
         </div>
       </div>
-    `).join("");
+    `;
+    }).join("");
   }
 
   document.getElementById("content").innerHTML = bodyHtml;
@@ -2350,12 +2730,14 @@ function renderOutputsTab(p) {
   const prefs = loadPrefs();
   const oPreset = document.getElementById("o-cap-preset");
   const oColor = document.getElementById("o-cap-color");
+  const oPos = document.getElementById("o-cap-position");
   const oF1 = document.getElementById("o-filter-1");
   const oF2 = document.getElementById("o-filter-2");
-  if (oPreset) oPreset.value = prefs.preset;
-  if (oColor) oColor.value = prefs.color;
-  if (oF1) oF1.value = prefs.filter1;
-  if (oF2) oF2.value = prefs.filter2;
+  if (oPreset) oPreset.value = prefs.preset || "iman";
+  if (oColor) oColor.value = prefs.color || "purple";
+  if (oPos) oPos.value = prefs.position || "bottom";
+  if (oF1) oF1.value = prefs.filter1 || "";
+  if (oF2) oF2.value = prefs.filter2 || "";
 
   const oMirrorCb = document.getElementById("o-mirror-video");
   const oMirrorChip = document.getElementById("o-mirror-chip");
@@ -2367,17 +2749,210 @@ function renderOutputsTab(p) {
     const persistOutPrefs = () => savePrefs({
       preset: oPreset.value,
       color: oColor.value,
+      position: oPos.value,
       filter1: oF1.value,
       filter2: oF2.value,
       mirror: oMirrorCb.checked,
     });
-    [oPreset, oColor, oF1, oF2].forEach(el => el && el.addEventListener("change", persistOutPrefs));
+    [oPreset, oColor, oPos, oF1, oF2].forEach(el => el && el.addEventListener("change", persistOutPrefs));
     oMirrorCb.addEventListener("change", () => {
       oMirrorChip.classList.toggle("is-on", oMirrorCb.checked);
       oMirrorState.textContent = oMirrorCb.checked ? "ON" : "OFF";
       persistOutPrefs();
     });
   }
+
+  // Bind Per-Clip Interactive Live Video Editors
+  outputs.forEach(o => {
+    const cid = o.clip_id;
+    const vidEl = document.getElementById(`vid-${cid}`);
+    const badgeEl = document.getElementById(`live-badge-${cid}`);
+    const attnOverlayEl = document.getElementById(`live-attn-${cid}`);
+    const attnBoxEl = document.getElementById(`live-attn-box-${cid}`);
+    const attnTxtPreviewEl = document.getElementById(`live-attn-txt-${cid}`);
+    const capGuideEl = document.getElementById(`live-cap-guide-${cid}`);
+    const capPillEl = document.getElementById(`live-cap-pill-${cid}`);
+
+    const capPosSel = document.getElementById(`ed-cappos-${cid}`);
+    const capPresetSel = document.getElementById(`ed-cappreset-${cid}`);
+    const capColorSel = document.getElementById(`ed-capcolor-${cid}`);
+    const f1Sel = document.getElementById(`ed-f1-${cid}`);
+    const f2Sel = document.getElementById(`ed-f2-${cid}`);
+    const mirrorCb = document.getElementById(`ed-mirror-${cid}`);
+    const mirrorChip = document.getElementById(`ed-mirror-chip-${cid}`);
+    const mirrorState = document.getElementById(`ed-mirror-state-${cid}`);
+
+    const attnOnCb = document.getElementById(`ed-attn-on-${cid}`);
+    const attnChip = document.getElementById(`ed-attn-chip-${cid}`);
+    const attnState = document.getElementById(`ed-attn-state-${cid}`);
+    const attnTxtIn = document.getElementById(`ed-attn-txt-${cid}`);
+    const attnPosSel = document.getElementById(`ed-attn-pos-${cid}`);
+    const attnDurSel = document.getElementById(`ed-attn-dur-${cid}`);
+    const attnStyleSel = document.getElementById(`ed-attn-style-${cid}`);
+    const pillsRow = document.getElementById(`ed-pills-${cid}`);
+
+    if (!vidEl || !capPosSel) return;
+
+    const savedState = {
+      caption_position: o.caption_position || "bottom",
+      caption_preset: o.caption_preset || "iman",
+      caption_color: o.caption_color || "purple",
+      f1: (o.video_filters && o.video_filters[0]) || "",
+      f2: (o.video_filters && o.video_filters[1]) || "",
+      mirror: !!o.mirror_video,
+      attn_on: !!o.attention_card_enabled,
+      attn_txt: o.attention_card_text || o.hook_text || "",
+      attn_pos: o.attention_card_position || "center",
+      attn_dur: String(o.attention_card_duration !== undefined ? Math.round(o.attention_card_duration) : 4),
+      attn_style: o.attention_card_style || "white_box",
+    };
+
+    function loadSavedIntoInputs() {
+      capPosSel.value = savedState.caption_position;
+      capPresetSel.value = savedState.caption_preset;
+      capColorSel.value = savedState.caption_color;
+      f1Sel.value = savedState.f1;
+      f2Sel.value = savedState.f2;
+      mirrorCb.checked = savedState.mirror;
+      mirrorChip.classList.toggle("is-on", mirrorCb.checked);
+      mirrorState.textContent = mirrorCb.checked ? "ON" : "OFF";
+
+      attnOnCb.checked = savedState.attn_on;
+      attnChip.classList.toggle("is-on", attnOnCb.checked);
+      attnState.textContent = attnOnCb.checked ? "ON" : "OFF";
+      attnTxtIn.value = savedState.attn_txt;
+      attnPosSel.value = savedState.attn_pos;
+      attnDurSel.value = ["0", "3", "4", "7"].includes(savedState.attn_dur) ? savedState.attn_dur : "4";
+      attnStyleSel.value = savedState.attn_style;
+      updateLivePreview(false);
+    }
+
+    function updateLivePreview(showGuideOnPosChange = true) {
+      const curF1 = f1Sel.value;
+      const curF2 = f2Sel.value;
+      const curMirror = mirrorCb.checked;
+      const curCapPos = capPosSel.value;
+      const curAttnOn = attnOnCb.checked;
+      const curAttnTxt = attnTxtIn.value.trim() || o.hook_text || "WAIT FOR THIS...";
+      const curAttnPos = attnPosSel.value;
+      const curAttnDur = parseFloat(attnDurSel.value) || 0;
+      const curAttnStyle = attnStyleSel.value;
+
+      // Sync pill button highlight with Filter Layer 1
+      if (pillsRow) {
+        pillsRow.querySelectorAll(".filter-pill-btn").forEach(btn => {
+          btn.classList.toggle("active", btn.dataset.fpill === curF1);
+        });
+      }
+
+      mirrorChip.classList.toggle("is-on", curMirror);
+      mirrorState.textContent = curMirror ? "ON" : "OFF";
+      attnChip.classList.toggle("is-on", curAttnOn);
+      attnState.textContent = curAttnOn ? "ON" : "OFF";
+
+      // Compute unbaked CSS filter preview for filters not already baked into the MP4 file
+      const bakedSet = new Set([savedState.f1, savedState.f2].filter(Boolean));
+      const chosenList = [curF1, curF2].filter(Boolean);
+      const cssParts = [];
+      chosenList.forEach(fk => {
+        if (!bakedSet.has(fk) && LIVE_FILTER_CSS_MAP[fk]) {
+          cssParts.push(LIVE_FILTER_CSS_MAP[fk]);
+        }
+      });
+      vidEl.style.filter = cssParts.length ? cssParts.join(" ") : "none";
+      vidEl.style.transform = (curMirror !== savedState.mirror) ? "scaleX(-1)" : "none";
+
+      // Live White Box Center Attention Card Overlay (shown whenever card is enabled & either unbaked or modified)
+      const attnModified =
+        curAttnOn !== savedState.attn_on ||
+        curAttnTxt !== savedState.attn_txt ||
+        curAttnPos !== savedState.attn_pos ||
+        String(curAttnDur) !== savedState.attn_dur ||
+        curAttnStyle !== savedState.attn_style;
+
+      const withinTime = curAttnDur <= 0 || vidEl.paused || vidEl.currentTime <= curAttnDur;
+      if (curAttnOn && (!savedState.attn_on || attnModified) && withinTime) {
+        attnOverlayEl.className = "live-attn-overlay active " + (
+          curAttnPos === "center" && curCapPos === "center" ? "pos-center-offset" : `pos-${curAttnPos}`
+        );
+        attnBoxEl.className = `live-attn-box style-${curAttnStyle}`;
+        attnTxtPreviewEl.textContent = curAttnTxt;
+      } else {
+        attnOverlayEl.classList.remove("active");
+      }
+
+      // Live Caption Position Guide Overlay
+      const capPosChanged = curCapPos !== savedState.caption_position;
+      if (showGuideOnPosChange && capPosChanged) {
+        capGuideEl.className = `live-cap-guide active pos-${curCapPos}`;
+        capPillEl.textContent = `New Caption Position: ${curCapPos.toUpperCase().replace("_", " ")}`;
+      } else {
+        capGuideEl.classList.remove("active");
+      }
+
+      const anyDirty =
+        curF1 !== savedState.f1 ||
+        curF2 !== savedState.f2 ||
+        curMirror !== savedState.mirror ||
+        capPosChanged ||
+        capPresetSel.value !== savedState.caption_preset ||
+        capColorSel.value !== savedState.caption_color ||
+        attnModified;
+
+      badgeEl.classList.toggle("active", anyDirty);
+    }
+
+    if (pillsRow) {
+      pillsRow.querySelectorAll(".filter-pill-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          f1Sel.value = btn.dataset.fpill || "";
+          if (!f1Sel.value) f2Sel.value = "";
+          updateLivePreview(true);
+        });
+      });
+    }
+
+    [capPosSel, capPresetSel, capColorSel, f1Sel, f2Sel, mirrorCb, attnOnCb, attnPosSel, attnDurSel, attnStyleSel].forEach(el => {
+      el.addEventListener("change", () => updateLivePreview(true));
+    });
+    attnTxtIn.addEventListener("input", () => {
+      if (!attnOnCb.checked && attnTxtIn.value.trim()) {
+        attnOnCb.checked = true;
+      }
+      updateLivePreview(true);
+    });
+    vidEl.addEventListener("timeupdate", () => updateLivePreview(false));
+    vidEl.addEventListener("pause", () => updateLivePreview(false));
+
+    document.getElementById(`ed-reset-${cid}`).addEventListener("click", () => {
+      loadSavedIntoInputs();
+      showToast(`Reset ${cid.toUpperCase()} preview to current saved video.`);
+    });
+
+    document.getElementById(`ed-save-${cid}`).addEventListener("click", async () => {
+      try {
+        const chosenFilters = [f1Sel.value, f2Sel.value].filter(Boolean);
+        const job = await apiPost("/api/jobs/edit-clip", {
+          name: p.name,
+          clip_id: cid,
+          caption_preset: capPresetSel.value,
+          active_color: capColorSel.value,
+          caption_position: capPosSel.value,
+          mirror_video: mirrorCb.checked,
+          video_filters: chosenFilters,
+          attention_card_enabled: attnOnCb.checked,
+          attention_card_text: attnTxtIn.value.trim() || o.hook_text || "",
+          attention_card_position: attnPosSel.value,
+          attention_card_duration: parseFloat(attnDurSel.value) || 0,
+          attention_card_style: attnStyleSel.value,
+        });
+        showToast(`Baking edits into ${cid.toUpperCase()}...`);
+        startPollingJob(job);
+      } catch (e) { showToast(e.message); }
+    });
+
+    loadSavedIntoInputs();
+  });
 
   async function triggerOutputRender(autoMode) {
     try {
@@ -2393,6 +2968,7 @@ function renderOutputsTab(p) {
         show_opening_title: false,
         caption_preset: document.getElementById("o-cap-preset").value,
         active_color: document.getElementById("o-cap-color").value,
+        caption_position: document.getElementById("o-cap-position").value,
         mirror_video: document.getElementById("o-mirror-video").checked,
         video_filters: oFilters,
       });

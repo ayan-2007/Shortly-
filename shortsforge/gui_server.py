@@ -31,6 +31,7 @@ from shortsforge.models import (
 )
 from shortsforge.pipeline import (
     run_autopilot_from_source,
+    run_edit_single_clip,
     run_new_project,
     run_render_project,
 )
@@ -123,6 +124,51 @@ class JobManager:
         t = threading.Thread(target=_runner, daemon=True)
         t.start()
         return rec
+
+
+def _apply_runtime_overrides(cfg: AppConfig, body: Dict[str, Any]) -> None:
+    """Apply runtime video editor overrides (filters, mirror, caption position, white box card) to an AppConfig."""
+    if body.get("caption_preset") in ("iman", "hormozi", "documentary", "neon", "comic", "minimal"):
+        cfg.captions.preset = body["caption_preset"]
+    if body.get("active_color") in ("purple", "yellow", "red"):
+        cfg.captions.active_color = body["active_color"]
+    if body.get("caption_position") in ("bottom", "lower_mid", "center", "upper_mid", "top"):
+        cfg.captions.position = body["caption_position"]
+    if body.get("caption_custom_y") is not None:
+        try:
+            cfg.captions.custom_y = int(body["caption_custom_y"])
+        except (TypeError, ValueError):
+            cfg.captions.custom_y = None
+    if body.get("hook_style") in ("cold_open", "freeze_narrator"):
+        cfg.hook.style = body["hook_style"]
+    if "hook_enabled" in body:
+        cfg.hook.enabled = bool(body["hook_enabled"])
+    if "show_opening_title" in body:
+        cfg.hook.show_opening_title = bool(body["show_opening_title"])
+    if "archive_tag" in body:
+        cfg.overlays.archive_tag = bool(body["archive_tag"])
+    if "mirror_video" in body:
+        cfg.export.mirror_video = bool(body["mirror_video"])
+    if isinstance(body.get("video_filters"), list):
+        cfg.export.video_filters = [str(f).strip() for f in body["video_filters"] if str(f).strip()][:2]
+    if "music_enabled" in body:
+        cfg.audio.bg_music_enabled = bool(body["music_enabled"])
+        cfg.audio.hook_bed_enabled = bool(body["music_enabled"])
+    if "face_tracking_enabled" in body:
+        cfg.reframe.face_tracking_enabled = bool(body["face_tracking_enabled"])
+    if "attention_card_enabled" in body:
+        cfg.overlays.attention_card_enabled = bool(body["attention_card_enabled"])
+    if "attention_card_text" in body:
+        cfg.overlays.attention_card_text = str(body.get("attention_card_text") or "").strip()
+    if body.get("attention_card_position") in ("center", "upper", "lower"):
+        cfg.overlays.attention_card_position = body["attention_card_position"]
+    if body.get("attention_card_duration") is not None:
+        try:
+            cfg.overlays.attention_card_duration_sec = max(0.0, float(body["attention_card_duration"]))
+        except (TypeError, ValueError):
+            pass
+    if body.get("attention_card_style") in ("white_box", "white_pill", "dark_neon"):
+        cfg.overlays.attention_card_style = body["attention_card_style"]
 
 
 def _safe_resolve_under(base_dir: Path, rel_path: str) -> Optional[Path]:
@@ -525,25 +571,9 @@ def create_gui_server(
                     return
 
                 cfg = self._cfg()
-                if body.get("caption_preset") in ("iman", "hormozi", "documentary", "neon", "comic", "minimal"):
-                    cfg.captions.preset = body["caption_preset"]
-                if body.get("active_color") in ("purple", "yellow", "red"):
-                    cfg.captions.active_color = body["active_color"]
-                if body.get("hook_style") in ("cold_open", "freeze_narrator"):
-                    cfg.hook.style = body["hook_style"]
-                if "hook_enabled" in body:
-                    cfg.hook.enabled = bool(body["hook_enabled"])
-                if "show_opening_title" in body:
-                    cfg.hook.show_opening_title = bool(body["show_opening_title"])
-                if "mirror_video" in body:
-                    cfg.export.mirror_video = bool(body["mirror_video"])
-                if isinstance(body.get("video_filters"), list):
-                    cfg.export.video_filters = [str(f).strip() for f in body["video_filters"] if str(f).strip()][:2]
-                if "music_enabled" in body:
-                    cfg.audio.bg_music_enabled = bool(body["music_enabled"])
-                    cfg.audio.hook_bed_enabled = bool(body["music_enabled"])
+                _apply_runtime_overrides(cfg, body)
                 raw_max = body.get("max_clips")
-                max_clips = 15 if (raw_max is None or int(raw_max) <= 0) else max(1, min(15, int(raw_max)))
+                max_clips = 12 if (raw_max is None or int(raw_max) <= 0) else max(1, min(15, int(raw_max)))
                 force = bool(body.get("force", False))
 
                 def _run_auto(rec: JobRecord) -> None:
@@ -663,22 +693,7 @@ def create_gui_server(
                     return
 
                 cfg = self._cfg()
-                if body.get("hook_style") in ("cold_open", "freeze_narrator"):
-                    cfg.hook.style = body["hook_style"]
-                if "hook_enabled" in body:
-                    cfg.hook.enabled = bool(body["hook_enabled"])
-                if "show_opening_title" in body:
-                    cfg.hook.show_opening_title = bool(body["show_opening_title"])
-                if body.get("caption_preset") in ("iman", "hormozi", "documentary", "neon", "comic", "minimal"):
-                    cfg.captions.preset = body["caption_preset"]
-                if body.get("active_color") in ("purple", "yellow", "red"):
-                    cfg.captions.active_color = body["active_color"]
-                if "archive_tag" in body:
-                    cfg.overlays.archive_tag = bool(body["archive_tag"])
-                if "mirror_video" in body:
-                    cfg.export.mirror_video = bool(body["mirror_video"])
-                if isinstance(body.get("video_filters"), list):
-                    cfg.export.video_filters = [str(f).strip() for f in body["video_filters"] if str(f).strip()][:2]
+                _apply_runtime_overrides(cfg, body)
 
                 auto = bool(body.get("auto", False))
                 force = bool(body.get("force", False))
@@ -701,6 +716,33 @@ def create_gui_server(
                     rec.logs.append(f"Exported {len(exported)} Short(s) to outputs/{name}/")
 
                 rec = jobs.start_job("render", name, _run_render)
+                self._send_json(202, rec.to_dict())
+                return
+
+            if path == "/api/jobs/edit-clip":
+                name = str(body.get("name") or "").strip()
+                clip_id = str(body.get("clip_id") or "").strip()
+                if not name or not clip_id:
+                    self._send_json(400, {"error": "Both project name and clip_id are required."})
+                    return
+
+                cfg = self._cfg()
+                _apply_runtime_overrides(cfg, body)
+
+                def _run_edit(rec: JobRecord) -> None:
+                    def _prog(msg: str) -> None:
+                        rec.message = msg
+                        rec.logs.append(msg)
+
+                    updated = run_edit_single_clip(
+                        project_name=name,
+                        clip_id=clip_id,
+                        config=cfg,
+                        on_progress=_prog,
+                    )
+                    rec.logs.append(f"Baked runtime edits into {updated.output_video}")
+
+                rec = jobs.start_job("edit", name, _run_edit)
                 self._send_json(202, rec.to_dict())
                 return
 
