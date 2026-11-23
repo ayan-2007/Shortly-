@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
+import cv2
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
@@ -151,7 +152,9 @@ def run_new_project(
         candidates: List[ClipCandidate] = []
         if not force and "hooks" in state.completed_steps and workspace.candidates_path.exists():
             cached_cands = _load_candidates(workspace)
-            if cached_cands:
+            # Invalidate stale caches that had too few (<=4 on a long podcast) or too many (>15) clips
+            stale_count = (metadata.duration >= 600.0 and len(cached_cands) <= 4) or len(cached_cands) > 15
+            if cached_cands and not stale_count:
                 candidates = cached_cands
                 t_mom = progress.add_task("3/4 Loaded cached candidate clips & quality checks", total=1)
                 progress.advance(t_mom)
@@ -160,8 +163,8 @@ def run_new_project(
         if not candidates:
             t_mom = progress.add_task("3/4 Finding best moments & checking video/audio quality...", total=2)
             if on_progress:
-                cap_val = max(1, min(15, config.moments.max_candidates or 15))
-                on_progress(f"[3/4] Finding up to {cap_val} high-impact viral moments (quality over quantity)...")
+                cap_val = max(1, min(15, config.moments.max_candidates or 12))
+                on_progress(f"[3/4] Finding balanced sweet spot (up to {cap_val} viral moments)...")
             candidates = find_best_moments(
                 transcript=transcript,
                 metadata=metadata,
@@ -174,6 +177,7 @@ def run_new_project(
             if on_progress:
                 on_progress(f"[3/4] Inspecting video frames & audio on {len(candidates)} candidate clip(s)...")
             detector = FaceDetector()
+            shared_cap = cv2.VideoCapture(str(metadata.local_video_path))
             try:
                 for cand in candidates:
                     thumb_path = workspace.thumbs_dir / f"{cand.id}_preview.jpg"
@@ -184,6 +188,7 @@ def run_new_project(
                         config=config,
                         detector=detector,
                         thumb_output_path=thumb_path,
+                        video_cap=shared_cap if shared_cap.isOpened() else None,
                     )
                     cand.quality = qreport
                     cand.rejected_by_quality = not qreport.passed
@@ -197,6 +202,7 @@ def run_new_project(
                             f"{cand.id} rejected by quality gate: {'; '.join(qreport.rejection_reasons)}",
                         )
             finally:
+                shared_cap.release()
                 detector.close()
 
             _save_candidates(workspace, candidates)
@@ -471,17 +477,76 @@ def run_render_project(
     return exported
 
 
+def run_edit_single_clip(
+    project_name: str,
+    clip_id: str,
+    config: AppConfig,
+    on_progress: Optional[Callable[[str], None]] = None,
+) -> ClipExportMetadata:
+    """Fast post-render edit for a single Short (runtime filters, mirror, caption position, white center attention box)."""
+    workspace = ProjectWorkspace(
+        project_dir=config.projects_root() / project_name,
+        output_dir=config.outputs_root() / project_name,
+    )
+    state = workspace.load_state()
+    if state is None:
+        raise FileNotFoundError(f"Project '{project_name}' not found.")
+
+    metadata = VideoMetadata.model_validate_json(workspace.metadata_path.read_text(encoding="utf-8"))
+    transcript = Transcript.model_validate_json(workspace.transcript_path.read_text(encoding="utf-8"))
+    candidates = _load_candidates(workspace)
+    cand = next((c for c in candidates if c.id == clip_id), None)
+    if cand is None:
+        raise ValueError(f"Clip '{clip_id}' not found in project '{project_name}'.")
+
+    decisions_doc = load_decisions(workspace, project_name)
+    dec = decisions_doc.decisions.get(cand.id)
+    hook_text = (dec.edited_hook_text or "").strip() if dec else ""
+    if not hook_text and cand.hooks:
+        if dec:
+            cand.hooks.selected_index = dec.selected_hook_index
+        hook_text = cand.hooks.active_hook_text()
+    hook_text = hook_text or cand.key_quote[:60]
+
+    if on_progress:
+        on_progress(f"Applying runtime edits (filters, caption position & center attention card) to {clip_id}...")
+
+    llm = LLMClient(config=config, workspace=workspace)
+    detector = FaceDetector()
+    try:
+        updated_meta = render_single_short(
+            candidate=cand,
+            hook_text=hook_text,
+            metadata=metadata,
+            transcript=transcript,
+            person=state.person,
+            work_dir=workspace.work_dir,
+            output_dir=workspace.output_dir,
+            llm=llm,
+            config=config,
+            detector=detector,
+        )
+    finally:
+        detector.close()
+
+    if cand.id not in state.rendered_clips:
+        state.rendered_clips.append(cand.id)
+        workspace.save_state(state)
+
+    return updated_meta
+
+
 def run_autopilot_from_source(
     source: str,
     config: AppConfig,
-    max_clips: int = 15,
+    max_clips: int = 12,
     force: bool = False,
     on_progress: Optional[Callable[[str], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
     on_project_detected: Optional[Callable[[str], None]] = None,
 ) -> Tuple[str, List[ClipExportMetadata]]:
-    """One-click autopilot: given ONLY a URL or file path, auto-detects project/person, finds clips (15 max), and renders Shorts."""
-    capped = 15 if (max_clips is None or max_clips <= 0) else max(1, min(15, max_clips))
+    """One-click autopilot: given ONLY a URL or file path, auto-detects project/person, finds clips (balanced 8-12), and renders Shorts."""
+    capped = 12 if (max_clips is None or max_clips <= 0) else max(1, min(15, max_clips))
     if on_progress:
         on_progress("Analyzing link to auto-detect speaker, show & project...")
     project_name, person, show_name, year = auto_detect_project_and_person(source, config)

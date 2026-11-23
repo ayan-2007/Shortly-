@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import List, Optional
@@ -27,6 +28,7 @@ from shortsforge.models import (
     VideoMetadata,
     WordTimestamp,
 )
+from shortsforge.overlays import render_attention_card_png
 from shortsforge.quality_check import FaceDetector
 from shortsforge.reframe import build_native_reframe_filter, reframe_clip_to_vertical
 from shortsforge.tts import synthesize_narrator
@@ -62,6 +64,9 @@ VIDEO_QUALITY_FILTERS: dict[str, str] = {
     "sharp_hd": "cas=0.38,unsharp=5:5:0.55:3:3:0.0",
     "denoise_clean": "hqdn3d=2.0:1.5:3.0:2.5",
     "warm_studio": "colorbalance=rs=0.03:gs=0.01:bs=-0.03:rh=0.04:gh=0.01:bh=-0.03,vignette=PI/6",
+    "vibrant_pop": "eq=contrast=1.12:brightness=0.02:saturation=1.28:gamma=0.96",
+    "cool_documentary": "colorbalance=rs=-0.03:gs=0.0:bs=0.04:rh=-0.02:gh=0.01:bh=0.05,eq=contrast=1.10:saturation=0.92",
+    "bw_noir": "hue=s=0,eq=contrast=1.22:brightness=0.01:gamma=0.94,vignette=PI/6",
 }
 
 
@@ -360,6 +365,15 @@ def render_single_short(
     meta_json_path = output_dir / f"{base_name}_metadata.json"
     meta_txt_path = output_dir / f"{base_name}_metadata.txt"
 
+    # Check for existing publishing metadata from prior renders of the same clip_id before cleaning old files
+    existing_pub_meta: Optional[ClipExportMetadata] = None
+    for old_meta_f in sorted(output_dir.glob(f"{candidate.id}_*_metadata.json")):
+        try:
+            existing_pub_meta = ClipExportMetadata.model_validate_json(old_meta_f.read_text(encoding="utf-8"))
+            break
+        except Exception:  # noqa: BLE001
+            continue
+
     # Remove stale files from prior renders of the same clip_id with a different slug so duplicates never appear
     for old_f in output_dir.glob(f"{candidate.id}_*"):
         if not old_f.name.startswith(f"{base_name}.") and not old_f.name.startswith(f"{base_name}_"):
@@ -373,6 +387,22 @@ def render_single_short(
     mood = getattr(candidate, "mood", "tense") or "tense"
     was_upscaled = (metadata.height * (9.0 / 16.0)) < config.reframe.output_width
     pre_ass_filters = build_video_enhancement_filter_chain(config, was_upscaled=was_upscaled)
+
+    # Post-render White Box Center Attention Card overlay
+    attn_enabled = bool(getattr(config.overlays, "attention_card_enabled", False))
+    attn_text = str(getattr(config.overlays, "attention_card_text", "") or "").strip() or hook_text
+    attn_pos = str(getattr(config.overlays, "attention_card_position", "center") or "center").strip().lower()
+    attn_dur = float(getattr(config.overlays, "attention_card_duration_sec", 4.0) or 0.0)
+    attn_style = str(getattr(config.overlays, "attention_card_style", "white_box") or "white_box").strip().lower()
+    attn_png_path: Optional[Path] = None
+    if attn_enabled and attn_text:
+        attn_png_path = render_attention_card_png(
+            card_text=attn_text,
+            output_path=clip_work / "attention_card.png",
+            config=config,
+            position=attn_pos,
+            style=attn_style,
+        )
 
     use_direct_fast_path = not (config.hook.enabled and candidate.duration >= 5.0)
     cleanup_paths: List[Path] = []
@@ -440,43 +470,82 @@ def render_single_short(
 
     if use_direct_fast_path:
         # FAST SINGLE-PASS PATH: Zero intermediate MP4, zero 4K Python pixel piping, native FFmpeg face-tracked crop + GPU H.264!
-        run_ffmpeg([
-            "-ss", f"{candidate.start:.3f}",
-            "-i", str(source_path),
-            "-t", f"{slice_dur:.3f}",
-            "-vn",
-            "-ar", "48000",
-            "-ac", "2",
-            "-c:a", "pcm_s16le",
-            str(main_audio_wav),
-        ])
-        if config.audio.bg_music_enabled:
-            master_wav, measured_lufs = build_master_audio(
-                hook_audio_wav=main_audio_wav,
-                main_audio_wav=main_audio_wav,
-                hook_duration=0.2,
-                transition_duration=0.0,
-                closing_duration=0.0,
-                work_dir=clip_work,
-                config=config,
-                mood=mood,
-            )
-        else:
-            master_wav, measured_lufs = normalize_to_lufs(
-                input_wav=main_audio_wav,
-                output_wav=clip_work / "master_loudnorm.wav",
-                config=config,
-            )
+        cached_loudnorm_wav = clip_work / "master_loudnorm.wav"
+        reframe_cache_file = clip_work / "reframe_cache.json"
+        cached_reframe = None
+        if reframe_cache_file.exists():
+            try:
+                rc = json.loads(reframe_cache_file.read_text(encoding="utf-8"))
+                if (
+                    abs(float(rc.get("start", -1.0)) - candidate.start) < 0.05
+                    and abs(float(rc.get("end", -1.0)) - candidate.end) < 0.05
+                    and rc.get("enhance_old") == bool(config.reframe.enhance_old_footage)
+                    and rc.get("reframe_filter")
+                ):
+                    cached_reframe = rc
+            except Exception:  # noqa: BLE001
+                cached_reframe = None
 
-        reframe_filter, out_fps_val, _ = build_native_reframe_filter(
-            source_video=source_path,
-            start_sec=candidate.start,
-            end_sec=candidate.end,
-            config=config,
-            detector=detector,
-            thumb_output_jpg=final_thumb,
-            peak_offset_sec=peak_offset_sec,
-        )
+        if not config.audio.bg_music_enabled and cached_loudnorm_wav.exists() and cached_loudnorm_wav.stat().st_size > 1024 and cached_reframe:
+            master_wav = cached_loudnorm_wav
+            measured_lufs = cached_reframe.get("measured_lufs", -14.0)
+        else:
+            run_ffmpeg([
+                "-ss", f"{candidate.start:.3f}",
+                "-i", str(source_path),
+                "-t", f"{slice_dur:.3f}",
+                "-vn",
+                "-ar", "48000",
+                "-ac", "2",
+                "-c:a", "pcm_s16le",
+                str(main_audio_wav),
+            ])
+            if config.audio.bg_music_enabled:
+                master_wav, measured_lufs = build_master_audio(
+                    hook_audio_wav=main_audio_wav,
+                    main_audio_wav=main_audio_wav,
+                    hook_duration=0.2,
+                    transition_duration=0.0,
+                    closing_duration=0.0,
+                    work_dir=clip_work,
+                    config=config,
+                    mood=mood,
+                )
+            else:
+                master_wav, measured_lufs = normalize_to_lufs(
+                    input_wav=main_audio_wav,
+                    output_wav=cached_loudnorm_wav,
+                    config=config,
+                )
+            cleanup_paths.append(main_audio_wav)
+
+        if cached_reframe and final_thumb.exists():
+            reframe_filter = str(cached_reframe["reframe_filter"])
+            out_fps_val = float(cached_reframe.get("out_fps_val") or config.reframe.output_fps)
+        else:
+            reframe_filter, out_fps_val, _ = build_native_reframe_filter(
+                source_video=source_path,
+                start_sec=candidate.start,
+                end_sec=candidate.end,
+                config=config,
+                detector=detector,
+                thumb_output_jpg=final_thumb,
+                peak_offset_sec=peak_offset_sec,
+            )
+            try:
+                reframe_cache_file.write_text(
+                    json.dumps({
+                        "start": candidate.start,
+                        "end": candidate.end,
+                        "reframe_filter": reframe_filter,
+                        "out_fps_val": out_fps_val,
+                        "measured_lufs": measured_lufs,
+                        "enhance_old": bool(config.reframe.enhance_old_footage),
+                    }),
+                    encoding="utf-8",
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
         clip_words: List[WordTimestamp] = [
             w for w in transcript.words if w.end >= candidate.start and w.start <= candidate.end
@@ -499,17 +568,6 @@ def render_single_short(
         if font_path and font_path.parent.exists():
             fontsdir_arg = f":fontsdir='{escape_ffmpeg_filter_path(font_path.parent)}'"
 
-        if ";" in reframe_filter:
-            fc_template = (
-                f"[0:v]setpts=PTS-STARTPTS,{reframe_filter}{pre_ass_filters},"
-                f"ass=filename='{escaped_ass}'{fontsdir_arg},format={{pix_fmt}}[vfinal]"
-            )
-        else:
-            fc_template = (
-                f"[0:v]setpts=PTS-STARTPTS,{reframe_filter}{pre_ass_filters},"
-                f"ass=filename='{escaped_ass}'{fontsdir_arg},format={{pix_fmt}}[vfinal]"
-            )
-
         input_args = [
             "-hwaccel", "auto",
             "-ss", f"{candidate.start:.3f}",
@@ -517,13 +575,26 @@ def render_single_short(
             "-t", f"{slice_dur:.3f}",
             "-i", str(master_wav),
         ]
+        if attn_png_path is not None and attn_png_path.exists():
+            input_args.extend(["-i", str(attn_png_path)])
+            enable_expr = f":enable='between(t,0,{attn_dur:.2f})'" if (0.1 < attn_dur < slice_dur) else ""
+            fc_template = (
+                f"[0:v]setpts=PTS-STARTPTS,{reframe_filter}{pre_ass_filters},"
+                f"ass=filename='{escaped_ass}'{fontsdir_arg}[vcap];"
+                f"[vcap][2:v]overlay=0:0{enable_expr},format={{pix_fmt}}[vfinal]"
+            )
+        else:
+            fc_template = (
+                f"[0:v]setpts=PTS-STARTPTS,{reframe_filter}{pre_ass_filters},"
+                f"ass=filename='{escaped_ass}'{fontsdir_arg},format={{pix_fmt}}[vfinal]"
+            )
+
         _run_encode_with_hw_fallback(
             input_args=input_args,
             fc_template=fc_template,
             audio_idx=1,
             extra_out_args=["-r", f"{out_fps_val}"],
         )
-        cleanup_paths.extend([main_audio_wav, master_wav])
     else:
         # Hook-enabled path: reframe clip, build cold-open hook segment, then single-pass composite with GPU H.264
         reframed_main = clip_work / "reframed_main.mp4"
@@ -616,11 +687,23 @@ def render_single_short(
 
         pts_parts = [f"[{i}:v]setpts=PTS-STARTPTS[v{i}]" for i in range(len(video_inputs))]
         v_labels = "".join(f"[v{i}]" for i in range(len(video_inputs)))
-        fc_template = (
-            ";".join(pts_parts)
-            + f";{v_labels}concat=n={len(video_inputs)}:v=1:a=0{pre_ass_filters},"
-            + f"ass=filename='{escaped_ass}'{fontsdir_arg},format={{pix_fmt}}[vfinal]"
-        )
+        if attn_png_path is not None and attn_png_path.exists():
+            card_idx = audio_input_idx + 1
+            input_args.extend(["-i", str(attn_png_path)])
+            total_dur = main_offset + slice_dur
+            enable_expr = f":enable='between(t,0,{attn_dur:.2f})'" if (0.1 < attn_dur < total_dur) else ""
+            fc_template = (
+                ";".join(pts_parts)
+                + f";{v_labels}concat=n={len(video_inputs)}:v=1:a=0{pre_ass_filters},"
+                + f"ass=filename='{escaped_ass}'{fontsdir_arg}[vcap];"
+                + f"[vcap][{card_idx}:v]overlay=0:0{enable_expr},format={{pix_fmt}}[vfinal]"
+            )
+        else:
+            fc_template = (
+                ";".join(pts_parts)
+                + f";{v_labels}concat=n={len(video_inputs)}:v=1:a=0{pre_ass_filters},"
+                + f"ass=filename='{escaped_ass}'{fontsdir_arg},format={{pix_fmt}}[vfinal]"
+            )
         _run_encode_with_hw_fallback(
             input_args=input_args,
             fc_template=fc_template,
@@ -650,7 +733,17 @@ def render_single_short(
     for tmp_p in cleanup_paths:
         tmp_p.unlink(missing_ok=True)
 
-    pub = _generate_publishing_metadata(candidate, metadata, person, hook_text, llm)
+    if existing_pub_meta is not None and existing_pub_meta.titles and existing_pub_meta.hook_text == hook_text:
+        pub = {
+            "titles": existing_pub_meta.titles,
+            "post_caption": existing_pub_meta.post_caption,
+            "description": existing_pub_meta.description,
+            "hashtags": existing_pub_meta.hashtags,
+            "pinned_comment": existing_pub_meta.pinned_comment,
+        }
+    else:
+        pub = _generate_publishing_metadata(candidate, metadata, person, hook_text, llm)
+
     export_meta = ClipExportMetadata(
         clip_id=candidate.id,
         output_video=final_mp4.name,
@@ -666,6 +759,16 @@ def render_single_short(
         end=candidate.end,
         score=candidate.score,
         lufs=measured_lufs,
+        caption_preset=config.captions.preset,
+        caption_color=config.captions.active_color,
+        caption_position=str(getattr(config.captions, "position", "bottom") or "bottom"),
+        mirror_video=bool(getattr(config.export, "mirror_video", False)),
+        video_filters=list(getattr(config.export, "video_filters", []) or [])[:2],
+        attention_card_enabled=attn_enabled,
+        attention_card_text=attn_text if attn_enabled else "",
+        attention_card_position=attn_pos,
+        attention_card_duration=attn_dur,
+        attention_card_style=attn_style,
     )
     meta_json_path.write_text(export_meta.model_dump_json(indent=2), encoding="utf-8")
 

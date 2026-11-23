@@ -378,6 +378,25 @@ def _build_kinetic_hook_events(
     return events
 
 
+def resolve_caption_center_y(config: AppConfig) -> int:
+    """Resolve the vertical Y coordinate on the 1080x1920 canvas for the active caption position preset."""
+    play_y = config.reframe.output_height
+    custom_y = getattr(config.captions, "custom_y", None)
+    if custom_y is not None:
+        return max(220, min(play_y - 180, int(custom_y)))
+
+    pos = str(getattr(config.captions, "position", "bottom") or "bottom").strip().lower()
+    if pos == "center":
+        return play_y // 2
+    if pos == "lower_mid":
+        return int(round(play_y * 0.65))
+    if pos == "upper_mid":
+        return int(round(play_y * 0.35))
+    if pos == "top":
+        return int(round(play_y * 0.22))
+    return play_y - config.captions.safe_margin_bottom - 60
+
+
 def build_ass_captions(
     clip_words: List[WordTimestamp],
     clip_start: float,
@@ -406,7 +425,7 @@ def build_ass_captions(
     play_x = config.reframe.output_width
     play_y = config.reframe.output_height
     center_x = play_x // 2
-    center_y = play_y - config.captions.safe_margin_bottom - 60
+    center_y = resolve_caption_center_y(config)
 
     hook_font_size = max(64, int(round(config.captions.font_size * 0.82)))
     header = f"""[Script Info]

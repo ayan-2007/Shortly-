@@ -177,6 +177,16 @@ class ClipExportMetadata(BaseModel):
     end: float
     score: int
     lufs: Optional[float] = None
+    caption_preset: str = "iman"
+    caption_color: str = "purple"
+    caption_position: str = "bottom"
+    mirror_video: bool = False
+    video_filters: List[str] = Field(default_factory=list)
+    attention_card_enabled: bool = False
+    attention_card_text: str = ""
+    attention_card_position: str = "center"
+    attention_card_duration: float = 4.0
+    attention_card_style: str = "white_box"
 
 
 class ProjectState(BaseModel):

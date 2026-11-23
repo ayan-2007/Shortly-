@@ -228,3 +228,116 @@ def render_closing_card_png(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(output_path, "PNG")
     return output_path
+
+
+def render_attention_card_png(
+    card_text: str,
+    output_path: Path,
+    config: AppConfig,
+    position: Optional[str] = None,
+    style: Optional[str] = None,
+) -> Path:
+    """Render the viral white box in the center of the screen with bold attention-grabbing text."""
+    w, h = config.reframe.output_width, config.reframe.output_height
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    clean_text = (card_text or getattr(config.overlays, "attention_card_text", "") or "").strip()
+    if not clean_text:
+        clean_text = "WAIT FOR THIS..."
+
+    card_pos = (position or getattr(config.overlays, "attention_card_position", "center") or "center").strip().lower()
+    card_style = (style or getattr(config.overlays, "attention_card_style", "white_box") or "white_box").strip().lower()
+
+    font_size = 54 if card_style == "white_pill" else 62
+    font = _load_font(config, size=font_size, bold=True)
+    wrap_width = 24 if card_style == "white_pill" else 20
+    wrapped = textwrap.wrap(clean_text, width=wrap_width)[:4]
+    if not wrapped:
+        wrapped = [clean_text[:28]]
+
+    line_metrics = [_text_metrics(draw, line, font) for line in wrapped]
+    max_lw = max((m[0] for m in line_metrics), default=240)
+    line_h = max((m[1] for m in line_metrics), default=54) + 18
+    total_th = line_h * len(wrapped) - 18
+
+    pad_x = 52 if card_style != "white_pill" else 44
+    pad_y = 36 if card_style != "white_pill" else 24
+    box_w = min(w - 110, max(360, max_lw + pad_x * 2))
+    box_h = total_th + pad_y * 2
+    box_x = (w - box_w) // 2
+
+    cap_pos = str(getattr(config.captions, "position", "bottom") or "bottom").strip().lower()
+    if card_pos == "upper":
+        target_cy = int(h * 0.25)
+    elif card_pos == "lower":
+        target_cy = int(h * 0.70)
+    else:
+        # Center of screen (slightly above dead-center if captions are also placed at center so both stay legible)
+        target_cy = int(h * 0.36) if cap_pos == "center" else int(h * 0.46)
+
+    box_y = max(120, min(h - box_h - 140, target_cy - box_h // 2))
+    radius = min(box_h // 2, 48) if card_style == "white_pill" else 26
+
+    # Soft drop shadow so the white box pops cleanly against any video backdrop
+    shadow_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    sdraw = ImageDraw.Draw(shadow_layer)
+    sdraw.rounded_rectangle(
+        [box_x + 4, box_y + 12, box_x + box_w + 4, box_y + box_h + 12],
+        radius=radius,
+        fill=(0, 0, 0, 165),
+    )
+    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(16))
+    img = Image.alpha_composite(img, shadow_layer)
+    draw = ImageDraw.Draw(img)
+
+    if card_style == "dark_neon":
+        box_fill = (14, 16, 26, 244)
+        border_col = (192, 75, 255, 255)
+        text_primary = (255, 255, 255, 255)
+        text_accent = (216, 118, 255, 255)
+        border_w = 5
+    else:
+        # Classic viral solid white attention box
+        box_fill = (255, 255, 255, 250)
+        border_col = (230, 234, 242, 255)
+        text_primary = (14, 16, 22, 255)
+        if config.captions.active_color == "red":
+            text_accent = (220, 28, 38, 255)
+        elif config.captions.active_color == "yellow":
+            text_accent = (205, 115, 0, 255)
+        else:
+            text_accent = (138, 34, 226, 255)
+        border_w = 3
+
+    draw.rounded_rectangle(
+        [box_x, box_y, box_x + box_w, box_y + box_h],
+        radius=radius,
+        fill=box_fill,
+        outline=border_col,
+        width=border_w,
+    )
+
+    # Top accent pill bar on white_box for signature viral editorial look
+    if card_style == "white_box":
+        bar_w = min(140, box_w // 3)
+        bar_x = (w - bar_w) // 2
+        draw.rounded_rectangle(
+            [bar_x, box_y + 10, bar_x + bar_w, box_y + 17],
+            radius=4,
+            fill=text_accent,
+        )
+
+    cur_y = box_y + pad_y
+    for idx, line in enumerate(wrapped):
+        lw, lh, lx_off, ly_off = line_metrics[idx]
+        tx = (w - lw) // 2 - lx_off
+        ty = cur_y - ly_off
+        is_highlight_line = (len(wrapped) > 1 and idx == len(wrapped) - 1) or any(ch.isdigit() or ch in "$%" for ch in line)
+        fill_col = text_accent if is_highlight_line else text_primary
+        draw.text((tx, ty), line, font=font, fill=fill_col)
+        cur_y += line_h
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(output_path, "PNG")
+    return output_path
