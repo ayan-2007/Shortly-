@@ -7,6 +7,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -21,12 +22,25 @@ class FFmpegExecutionError(RuntimeError):
 
 
 def _find_binary(name: str) -> str:
-    """Locate ffmpeg or ffprobe on PATH or common OS package manager directories."""
+    """Locate ffmpeg or ffprobe in bundled bin/, on PATH, or common OS package manager directories."""
+    exe = f"{name}.exe" if platform.system().lower() == "windows" else name
+
+    # 1. Check bundled bin/ directory (PyInstaller standalone or portable layout)
+    bundled_roots: List[Path] = []
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        bundled_roots.extend([exe_dir / "bin", exe_dir])
+    repo_root = Path(__file__).resolve().parent.parent
+    bundled_roots.extend([repo_root / "bin", Path.cwd() / "bin"])
+    for root in bundled_roots:
+        candidate = root / exe
+        if candidate.is_file():
+            return str(candidate)
+
+    # 2. Check PATH
     found = shutil.which(name)
     if found:
         return found
-
-    exe = f"{name}.exe" if platform.system().lower() == "windows" else name
 
     candidate_roots: List[Path] = []
     if platform.system().lower() == "windows":

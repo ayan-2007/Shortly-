@@ -8,3 +8,7 @@ outputs/
 *.mp4
 *.wav
 *.tmp
+build/
+dist/
+release/
+shortly.log
