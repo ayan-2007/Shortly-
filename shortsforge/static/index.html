@@ -1799,7 +1799,7 @@ function fmtTime(sec) {
 }
 
 async function apiGet(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: "no-store" });
   return res.json();
 }
 
@@ -2009,8 +2009,19 @@ function startPollingJob(jobObj) {
         APP.pollTimer = null;
         await loadProjectsList();
         if ((updated.status === "completed" || updated.status === "cancelled") && updated.project_name && updated.project_name !== "auto") {
-          showToast(updated.status === "completed" ? "Your Viral Shorts are ready!" : "Stopped cleanly.");
+          const doneMsg = updated.status === "completed"
+            ? (updated.kind === "edit" ? "Edits saved! Your updated Short is ready to preview & download." : "Your Viral Shorts are ready!")
+            : "Stopped cleanly.";
+          showToast(doneMsg);
+          const focusCid = updated.kind === "edit" ? APP.lastEditedClipId : null;
+          APP.lastEditedClipId = null;
           await openProject(updated.project_name, "outputs");
+          if (focusCid) {
+            const cardEl = document.getElementById(`out-card-${focusCid}`);
+            if (cardEl) cardEl.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        } else if (updated.status === "error") {
+          showToast(updated.message || "Job failed. Check logs above.");
         }
       }
     } catch (_) {}
@@ -2568,7 +2579,7 @@ function renderOutputsTab(p) {
             <span>Viral Score: <b style="color:#FFD3C4;">${o.score}/100</b></span>
             <span>Loudness: <b style="color:var(--green);">${o.lufs !== null ? o.lufs + " LUFS" : "N/A"}</b></span>
           </div>
-          <a class="btn-dl" href="${esc(o.video_url)}" download="${esc(o.output_video)}">
+          <a class="btn-dl" id="dl-${cid}" href="${esc(o.download_url || o.video_url)}" download="${esc(o.output_video)}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Download Short (.mp4)
           </a>
@@ -2931,6 +2942,12 @@ function renderOutputsTab(p) {
 
     document.getElementById(`ed-save-${cid}`).addEventListener("click", async () => {
       try {
+        try {
+          vidEl.pause();
+          vidEl.removeAttribute("src");
+          vidEl.load();
+        } catch (_) {}
+        APP.lastEditedClipId = cid;
         const chosenFilters = [f1Sel.value, f2Sel.value].filter(Boolean);
         const job = await apiPost("/api/jobs/edit-clip", {
           name: p.name,
@@ -2956,6 +2973,9 @@ function renderOutputsTab(p) {
 
   async function triggerOutputRender(autoMode) {
     try {
+      document.querySelectorAll("#content video").forEach(v => {
+        try { v.pause(); v.removeAttribute("src"); v.load(); } catch (_) {}
+      });
       const oFilters = [
         document.getElementById("o-filter-1").value,
         document.getElementById("o-filter-2").value,

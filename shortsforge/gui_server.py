@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import yaml
 
@@ -110,7 +110,11 @@ class JobManager:
                     rec.logs.append(f"[{kind.upper()}] Stopped cleanly.")
                 else:
                     rec.status = "completed"
-                    rec.message = "Completed! Your viral Shorts are ready."
+                    rec.message = (
+                        "Edits saved! Your updated Short is ready to preview & download."
+                        if kind == "edit"
+                        else "Completed! Your viral Shorts are ready."
+                    )
                     rec.logs.append(f"[{kind.upper()}] Completed successfully.")
             except Exception as exc:  # noqa: BLE001
                 rec.status = "error"
@@ -278,10 +282,25 @@ def _get_project_detail(config: AppConfig, project_name: str) -> Optional[Dict[s
                 ed = em.model_dump()
                 vid_p = ws.output_dir / em.output_video
                 th_p = ws.output_dir / em.thumbnail
-                v_tag = int(vid_p.stat().st_mtime * 1000) if vid_p.exists() else 0
-                t_tag = int(th_p.stat().st_mtime * 1000) if th_p.exists() else 0
-                ed["video_url"] = f"/media/output/{project_name}/{em.output_video}?v={v_tag}"
-                ed["thumbnail_url"] = f"/media/output/{project_name}/{em.thumbnail}?v={t_tag}"
+                if vid_p.exists():
+                    v_st = vid_p.stat()
+                    v_tag = f"{v_st.st_mtime_ns}_{v_st.st_size}"
+                    v_size = v_st.st_size
+                else:
+                    v_tag = "0"
+                    v_size = 0
+                if th_p.exists():
+                    t_st = th_p.stat()
+                    t_tag = f"{t_st.st_mtime_ns}_{t_st.st_size}"
+                else:
+                    t_tag = "0"
+                q_proj = quote(project_name, safe="")
+                q_vid = quote(em.output_video, safe="")
+                q_thumb = quote(em.thumbnail, safe="")
+                ed["video_url"] = f"/media/output/{q_proj}/{q_vid}?v={v_tag}"
+                ed["download_url"] = f"/media/output/{q_proj}/{q_vid}?download=1&v={v_tag}"
+                ed["thumbnail_url"] = f"/media/output/{q_proj}/{q_thumb}?v={t_tag}"
+                ed["file_size_bytes"] = v_size
                 outputs.append(ed)
             except Exception:  # noqa: BLE001
                 continue
@@ -396,14 +415,36 @@ def create_gui_server(
             raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
             return json.loads(raw) if raw.strip() else {}
 
-        def _serve_file_with_range(self, file_path: Path, no_cache: bool = False) -> None:
+        def _serve_file_with_range(
+            self,
+            file_path: Path,
+            no_cache: bool = False,
+            as_attachment: bool = False,
+            head_only: bool = False,
+        ) -> None:
             if not file_path.is_file():
                 self.send_error(404, "File not found")
                 return
             file_size = file_path.stat().st_size
             ctype, _ = mimetypes.guess_type(str(file_path))
-            ctype = ctype or "application/octet-stream"
-            range_hdr = self.headers.get("Range")
+            ctype = "application/octet-stream" if as_attachment else (ctype or "application/octet-stream")
+            range_hdr = None if as_attachment else self.headers.get("Range")
+
+            def _send_cache_headers() -> None:
+                if no_cache or as_attachment:
+                    self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                    self.send_header("Pragma", "no-cache")
+                    self.send_header("Expires", "0")
+
+            def _send_attachment_headers() -> None:
+                if as_attachment:
+                    safe_ascii = file_path.name.encode("ascii", "ignore").decode("ascii").replace('"', "_") or "short.mp4"
+                    quoted_utf8 = quote(file_path.name, safe="")
+                    self.send_header(
+                        "Content-Disposition",
+                        f"attachment; filename=\"{safe_ascii}\"; filename*=UTF-8''{quoted_utf8}",
+                    )
+                    self.send_header("X-Content-Type-Options", "nosniff")
 
             try:
                 if range_hdr and range_hdr.startswith("bytes="):
@@ -420,9 +461,10 @@ def create_gui_server(
                     self.send_header("Accept-Ranges", "bytes")
                     self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
                     self.send_header("Content-Length", str(length))
-                    if no_cache:
-                        self.send_header("Cache-Control", "no-cache")
+                    _send_cache_headers()
                     self.end_headers()
+                    if head_only:
+                        return
                     with file_path.open("rb") as fh:
                         fh.seek(start)
                         remaining = length
@@ -438,9 +480,11 @@ def create_gui_server(
                 self.send_header("Content-Type", ctype)
                 self.send_header("Accept-Ranges", "bytes")
                 self.send_header("Content-Length", str(file_size))
-                if no_cache:
-                    self.send_header("Cache-Control", "no-cache")
+                _send_attachment_headers()
+                _send_cache_headers()
                 self.end_headers()
+                if head_only:
+                    return
                 with file_path.open("rb") as fh:
                     while True:
                         chunk = fh.read(65536)
@@ -449,6 +493,59 @@ def create_gui_server(
                         self.wfile.write(chunk)
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return
+
+        def _handle_media_request(self, path: str, query: str, head_only: bool = False) -> bool:
+            if path.startswith("/media/project/"):
+                rest = path.split("/media/project/", 1)[1]
+                parts = rest.split("/", 1)
+                if len(parts) != 2:
+                    self.send_error(400)
+                    return True
+                proj_name, rel = parts
+                target = _safe_resolve_under(self._cfg().projects_root() / proj_name, rel)
+                if target is None:
+                    self.send_error(403)
+                    return True
+                self._serve_file_with_range(target, no_cache=True, head_only=head_only)
+                return True
+
+            if path.startswith("/media/output/"):
+                rest = path.split("/media/output/", 1)[1]
+                parts = rest.split("/", 1)
+                if len(parts) != 2:
+                    self.send_error(400)
+                    return True
+                proj_name, rel = parts
+                target = _safe_resolve_under(self._cfg().outputs_root() / proj_name, rel)
+                if target is None:
+                    self.send_error(403)
+                    return True
+                qs = parse_qs(query)
+                as_attachment = qs.get("download", ["0"])[0].lower() in ("1", "true", "yes")
+                self._serve_file_with_range(
+                    target,
+                    no_cache=True,
+                    as_attachment=as_attachment,
+                    head_only=head_only,
+                )
+                return True
+
+            return False
+
+        def do_HEAD(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            path = unquote(parsed.path)
+            if self._handle_media_request(path, parsed.query, head_only=True):
+                return
+            if path.startswith("/static/"):
+                rel = path.split("/static/", 1)[1].lstrip("/")
+                target = _safe_resolve_under(STATIC_DIR, rel)
+                if target is None or not target.is_file():
+                    self.send_error(404, "Static asset not found")
+                    return
+                self._serve_file_with_range(target, no_cache=True, head_only=True)
+                return
+            self.send_error(404)
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -523,32 +620,7 @@ def create_gui_server(
                 })
                 return
 
-            if path.startswith("/media/project/"):
-                rest = path.split("/media/project/", 1)[1]
-                parts = rest.split("/", 1)
-                if len(parts) != 2:
-                    self.send_error(400)
-                    return
-                proj_name, rel = parts
-                target = _safe_resolve_under(self._cfg().projects_root() / proj_name, rel)
-                if target is None:
-                    self.send_error(403)
-                    return
-                self._serve_file_with_range(target, no_cache=True)
-                return
-
-            if path.startswith("/media/output/"):
-                rest = path.split("/media/output/", 1)[1]
-                parts = rest.split("/", 1)
-                if len(parts) != 2:
-                    self.send_error(400)
-                    return
-                proj_name, rel = parts
-                target = _safe_resolve_under(self._cfg().outputs_root() / proj_name, rel)
-                if target is None:
-                    self.send_error(403)
-                    return
-                self._serve_file_with_range(target, no_cache=True)
+            if self._handle_media_request(path, parsed.query, head_only=False):
                 return
 
             self.send_error(404)

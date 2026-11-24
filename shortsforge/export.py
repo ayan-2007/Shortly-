@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import time
+import uuid
 from pathlib import Path
 from typing import List, Optional
 
@@ -341,6 +344,21 @@ def _generate_publishing_metadata(
     }
 
 
+def _atomic_replace_file(src: Path, dst: Path, retries: int = 12, delay_sec: float = 0.25) -> None:
+    """Atomically replace dst with src, retrying briefly on Windows file-lock conflicts."""
+    last_err: Optional[Exception] = None
+    for attempt in range(retries):
+        try:
+            os.replace(src, dst)
+            return
+        except (PermissionError, OSError) as exc:
+            last_err = exc
+            if attempt < retries - 1:
+                time.sleep(delay_sec)
+    if last_err is not None:
+        raise last_err
+
+
 def render_single_short(
     candidate: ClipCandidate,
     hook_text: str,
@@ -423,6 +441,7 @@ def render_single_short(
         extra_out_args: Optional[List[str]] = None,
     ) -> None:
         extra = extra_out_args or []
+        tmp_mp4 = output_dir / f".{base_name}.{uuid.uuid4().hex[:8]}.tmp.mp4"
         cmd = [
             *input_args,
             "-filter_complex", fc_template.format(pix_fmt=filter_pix_fmt),
@@ -437,36 +456,45 @@ def render_single_short(
             "-b:a", config.export.audio_bitrate,
             "-movflags", "+faststart",
             "-shortest",
-            str(final_mp4),
+            str(tmp_mp4),
         ]
         try:
-            run_ffmpeg(cmd)
-        except FFmpegExecutionError:
-            if enc_name == "libx264":
-                raise
-            # Seamless fallback to software libx264 if hardware encoder rejects a stream
-            _, sw_args, sw_pix = get_h264_encode_args(
-                crf=config.export.video_crf,
-                preset=config.export.video_preset,
-                hw_accel=False,
-            )
-            sw_cmd = [
-                *input_args,
-                "-filter_complex", fc_template.format(pix_fmt=sw_pix),
-                "-map", "[vfinal]",
-                "-map", f"{audio_idx}:a:0",
-                *sw_args,
-                *extra,
-                "-colorspace", "bt709",
-                "-color_primaries", "bt709",
-                "-color_trc", "bt709",
-                "-c:a", "aac",
-                "-b:a", config.export.audio_bitrate,
-                "-movflags", "+faststart",
-                "-shortest",
-                str(final_mp4),
-            ]
-            run_ffmpeg(sw_cmd)
+            try:
+                run_ffmpeg(cmd)
+            except FFmpegExecutionError:
+                if enc_name == "libx264":
+                    raise
+                # Seamless fallback to software libx264 if hardware encoder rejects a stream
+                tmp_mp4.unlink(missing_ok=True)
+                _, sw_args, sw_pix = get_h264_encode_args(
+                    crf=config.export.video_crf,
+                    preset=config.export.video_preset,
+                    hw_accel=False,
+                )
+                sw_cmd = [
+                    *input_args,
+                    "-filter_complex", fc_template.format(pix_fmt=sw_pix),
+                    "-map", "[vfinal]",
+                    "-map", f"{audio_idx}:a:0",
+                    *sw_args,
+                    *extra,
+                    "-colorspace", "bt709",
+                    "-color_primaries", "bt709",
+                    "-color_trc", "bt709",
+                    "-c:a", "aac",
+                    "-b:a", config.export.audio_bitrate,
+                    "-movflags", "+faststart",
+                    "-shortest",
+                    str(tmp_mp4),
+                ]
+                run_ffmpeg(sw_cmd)
+
+            if not tmp_mp4.exists() or tmp_mp4.stat().st_size == 0:
+                raise FFmpegExecutionError(f"FFmpeg produced an empty output file for {final_mp4.name}")
+            _atomic_replace_file(tmp_mp4, final_mp4)
+        finally:
+            if tmp_mp4.exists():
+                tmp_mp4.unlink(missing_ok=True)
 
     if use_direct_fast_path:
         # FAST SINGLE-PASS PATH: Zero intermediate MP4, zero 4K Python pixel piping, native FFmpeg face-tracked crop + GPU H.264!
@@ -770,7 +798,9 @@ def render_single_short(
         attention_card_duration=attn_dur,
         attention_card_style=attn_style,
     )
-    meta_json_path.write_text(export_meta.model_dump_json(indent=2), encoding="utf-8")
+    tmp_meta_json = output_dir / f".{base_name}.{uuid.uuid4().hex[:8]}.meta.tmp"
+    tmp_meta_json.write_text(export_meta.model_dump_json(indent=2), encoding="utf-8")
+    _atomic_replace_file(tmp_meta_json, meta_json_path)
 
     txt_lines = [
         f"CLIP: {candidate.id} ({candidate.start:.2f}s - {candidate.end:.2f}s) | Score: {candidate.score}/100 | Mood: {mood.upper()}",

@@ -149,7 +149,11 @@ def test_gui_server_endpoints_and_range_streaming(tmp_path: Path) -> None:
             assert isinstance(cfg_resp["keys"]["GEMINI_API_KEY"], bool)
 
         # 6. Video Range request returns HTTP 206 Partial Content & output URLs are cache-busted
-        assert "?v=" in detail["outputs"][0]["video_url"]
+        out0 = detail["outputs"][0]
+        assert "?v=" in out0["video_url"]
+        assert "?download=1&v=" in out0["download_url"]
+        assert out0["download_url"] != out0["video_url"]
+
         r_req = urllib.request.Request(
             f"{base}/media/output/demo_ep/clip_01_demo.mp4",
             headers={"Range": "bytes=0-15"},
@@ -157,6 +161,36 @@ def test_gui_server_endpoints_and_range_streaming(tmp_path: Path) -> None:
         with urllib.request.urlopen(r_req) as resp:
             assert resp.status == 206
             assert resp.read() == b"0123456789ABCDEF"
+
+        # 6b. Attachment download returns HTTP 200 full file with Content-Disposition & no-store
+        dl_req = urllib.request.Request(
+            f"{base}{out0['download_url']}",
+            headers={"Range": "bytes=0-15"},
+        )
+        with urllib.request.urlopen(dl_req) as resp:
+            assert resp.status == 200
+            assert "attachment;" in (resp.headers.get("Content-Disposition") or "")
+            assert "clip_01_demo.mp4" in (resp.headers.get("Content-Disposition") or "")
+            assert "no-store" in (resp.headers.get("Cache-Control") or "")
+            assert resp.read() == b"0123456789ABCDEF" * 16
+
+        # 6c. HEAD request works cleanly for download & streaming URLs
+        head_req = urllib.request.Request(f"{base}{out0['download_url']}", method="HEAD")
+        with urllib.request.urlopen(head_req) as resp:
+            assert resp.status == 200
+            assert int(resp.headers.get("Content-Length", "0")) == len(b"0123456789ABCDEF" * 16)
+            assert "attachment;" in (resp.headers.get("Content-Disposition") or "")
+
+        # 6d. After post-render re-render updates the MP4, download_url cache tag changes & serves new bytes
+        updated_bytes = b"RE_RENDERED_EDIT_BYTES!" * 20
+        fake_mp4.write_bytes(updated_bytes)
+        with urllib.request.urlopen(f"{base}/api/projects/demo_ep") as resp:
+            detail_after = json.loads(resp.read().decode("utf-8"))
+        out0_after = detail_after["outputs"][0]
+        assert out0_after["download_url"] != out0["download_url"]
+        with urllib.request.urlopen(f"{base}{out0_after['download_url']}") as resp:
+            assert resp.status == 200
+            assert resp.read() == updated_bytes
 
         # 7. Project delete endpoint removes project & output folders cleanly
         del_req = urllib.request.Request(
