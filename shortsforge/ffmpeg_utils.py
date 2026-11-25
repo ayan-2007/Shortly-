@@ -8,9 +8,10 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class FFmpegNotFoundError(RuntimeError):
@@ -21,6 +22,7 @@ class FFmpegExecutionError(RuntimeError):
     """Raised when an ffmpeg or ffprobe command returns a non-zero exit code."""
 
 
+@lru_cache(maxsize=8)
 def _find_binary(name: str) -> str:
     """Locate ffmpeg or ffprobe in bundled bin/, on PATH, or common OS package manager directories."""
     exe = f"{name}.exe" if platform.system().lower() == "windows" else name
@@ -83,24 +85,32 @@ def get_ffprobe_bin() -> str:
     return _find_binary("ffprobe")
 
 
-def run_ffmpeg(args: List[str], capture_output: bool = True) -> subprocess.CompletedProcess[str]:
+def run_ffmpeg(
+    args: List[str],
+    capture_output: bool = True,
+    timeout: Optional[int] = None,
+) -> subprocess.CompletedProcess[str]:
     """Run an ffmpeg command with clear error diagnostics."""
     cmd = [get_ffmpeg_bin(), "-hide_banner", "-y", *args]
-    proc = subprocess.run(
-        cmd,
-        capture_output=capture_output,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=capture_output,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise FFmpegExecutionError(f"ffmpeg timed out after {timeout}s") from exc
     if proc.returncode != 0:
         stderr_tail = (proc.stderr or "")[-1500:]
         raise FFmpegExecutionError(f"ffmpeg failed (exit {proc.returncode}):\n{stderr_tail}")
     return proc
 
 
-def probe_media(media_path: Path | str) -> Dict[str, Any]:
-    """Return parsed ffprobe JSON metadata for a media file."""
+@lru_cache(maxsize=64)
+def _probe_media_cached(resolved_path: str, mtime_ns: int, size: int) -> Dict[str, Any]:
     cmd = [
         get_ffprobe_bin(),
         "-v",
@@ -109,7 +119,7 @@ def probe_media(media_path: Path | str) -> Dict[str, Any]:
         "json",
         "-show_format",
         "-show_streams",
-        str(media_path),
+        resolved_path,
     ]
     proc = subprocess.run(
         cmd,
@@ -119,8 +129,18 @@ def probe_media(media_path: Path | str) -> Dict[str, Any]:
         errors="replace",
     )
     if proc.returncode != 0:
-        raise FFmpegExecutionError(f"ffprobe failed on {media_path}: {proc.stderr}")
+        raise FFmpegExecutionError(f"ffprobe failed on {resolved_path}: {proc.stderr}")
     return json.loads(proc.stdout)
+
+
+def probe_media(media_path: Path | str) -> Dict[str, Any]:
+    """Return parsed ffprobe JSON metadata for a media file (cached by mtime & size)."""
+    p = Path(media_path).resolve()
+    try:
+        st = p.stat()
+        return _probe_media_cached(str(p), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return _probe_media_cached(str(p), 0, 0)
 
 
 def extract_stream_info(probe_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -176,8 +196,8 @@ def _probe_working_hw_encoder(allow_hw: bool = True) -> str:
     ffmpeg_bin = get_ffmpeg_bin()
     candidates = [
         ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20"]),
-        ("h264_qsv", ["-c:v", "h264_qsv", "-preset", "fast", "-global_quality", "20", "-pix_fmt", "nv12"]),
-        ("h264_amf", ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp", "-qp_i", "20", "-qp_p", "20"]),
+        ("h264_qsv", ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "20", "-pix_fmt", "nv12"]),
+        ("h264_amf", ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "20", "-qp_p", "20"]),
     ]
     for name, enc_args in candidates:
         try:
@@ -185,11 +205,15 @@ def _probe_working_hw_encoder(allow_hw: bool = True) -> str:
                 [
                     ffmpeg_bin,
                     "-hide_banner",
-                    "-loglevel", "error",
-                    "-f", "lavfi",
-                    "-i", "color=c=black:s=640x360:d=0.15",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=black:s=640x360:d=0.1",
                     *enc_args,
-                    "-f", "null",
+                    "-f",
+                    "null",
                     "-",
                 ],
                 capture_output=True,
@@ -208,7 +232,7 @@ def get_h264_encode_args(
     preset: str = "veryfast",
     hw_accel: bool = True,
 ) -> Tuple[str, List[str], str]:
-    """Return (encoder_name, ffmpeg_video_args, filter_pix_fmt) using hardware GPU acceleration when available."""
+    """Return (encoder_name, ffmpeg_video_args, filter_pix_fmt) using the fastest encoder on this machine."""
     enc = _probe_working_hw_encoder(allow_hw=bool(hw_accel))
     q = max(14, min(28, int(crf) + 2))
     if enc == "h264_nvenc":
@@ -230,7 +254,7 @@ def get_h264_encode_args(
             enc,
             [
                 "-c:v", "h264_qsv",
-                "-preset", "fast",
+                "-preset", "veryfast",
                 "-global_quality", str(q),
                 "-g", "60",
                 "-pix_fmt", "nv12",
@@ -242,7 +266,7 @@ def get_h264_encode_args(
             enc,
             [
                 "-c:v", "h264_amf",
-                "-quality", "balanced",
+                "-quality", "speed",
                 "-rc", "cqp",
                 "-qp_i", str(q),
                 "-qp_p", str(q),

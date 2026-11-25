@@ -25,6 +25,7 @@ class VideoMetadata(BaseModel):
     aspect_ratio: float = 1.7778
     local_video_path: str = ""
     local_audio_path: str = ""
+    clip_only_mode: bool = False
     heatmap: List[Dict[str, float]] = Field(default_factory=list)
     chapters: List[Dict[str, Any]] = Field(default_factory=list)
 
@@ -138,6 +139,9 @@ class ClipCandidate(BaseModel):
     hooks: Optional[HookSet] = None
     thumbnail_path: Optional[str] = None
     rejected_by_quality: bool = False
+    clip_video_path: str = ""
+    clip_audio_path: str = ""
+    clip_time_offset: float = 0.0
 
     @property
     def duration(self) -> float:
@@ -187,6 +191,14 @@ class ClipExportMetadata(BaseModel):
     attention_card_position: str = "center"
     attention_card_duration: float = 4.0
     attention_card_style: str = "white_box"
+    attention_card_font_style: str = "bold_display"
+    attention_card_text_color: str = "auto"
+    attention_card_font_size: str = "medium"
+    attention_card_text_case: str = "normal"
+    aspect_ratio: str = "9:16"
+    playback_speed: float = 1.0
+    output_width: int = 1080
+    output_height: int = 1920
 
 
 class ProjectState(BaseModel):
@@ -198,6 +210,10 @@ class ProjectState(BaseModel):
     show_override: str = ""
     year_override: str = ""
     deceased: bool = False
+    mode: Literal["viral", "batch"] = "viral"
+    aspect_ratio: Literal["9:16", "16:9"] = "9:16"
+    part_duration_sec: float = 0.0
+    playback_speed: float = 1.0
     completed_steps: List[str] = Field(default_factory=list)
     rendered_clips: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)

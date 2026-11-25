@@ -44,6 +44,98 @@ def measure_integrated_lufs(media_path: Path) -> Optional[float]:
         return None
 
 
+def parse_loudnorm_output_lufs(stderr_text: str) -> Optional[float]:
+    """Extract post-normalization `output_i` LUFS from FFmpeg loudnorm JSON output if present."""
+    stats_after = _parse_loudnorm_json(stderr_text)
+    if stats_after and "output_i" in stats_after:
+        try:
+            val = float(stats_after["output_i"])
+            if val > -90.0:
+                return round(val, 2)
+        except (ValueError, TypeError):
+            pass
+    return None
+
+
+def _build_linear_loudnorm_af(stats: Optional[dict], config: AppConfig) -> str:
+    target_i = config.audio.target_lufs
+    target_tp = config.audio.true_peak_db
+    target_lra = config.audio.lra
+    if stats and all(k in stats for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")):
+        try:
+            in_i = float(stats["input_i"])
+            if in_i > -70.0:
+                return (
+                    f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:linear=true:"
+                    f"measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:"
+                    f"measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:"
+                    f"offset={stats['target_offset']}"
+                )
+        except ValueError:
+            pass
+    return f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}"
+
+
+def build_slice_loudnorm_filter(
+    source_media: Path,
+    start_sec: float,
+    duration_sec: float,
+    config: AppConfig,
+) -> Tuple[str, Optional[float]]:
+    """Measure [start_sec, start_sec + duration_sec] directly from source_media (-vn) and return (pass2_af, target_lufs)."""
+    target_i = config.audio.target_lufs
+    target_tp = config.audio.true_peak_db
+    target_lra = config.audio.lra
+    p1 = run_ffmpeg([
+        "-ss", f"{start_sec:.3f}",
+        "-t", f"{duration_sec:.3f}",
+        "-i", str(source_media),
+        "-vn",
+        "-ar", "48000",
+        "-ac", "2",
+        "-af", f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:print_format=json",
+        "-f", "null",
+        "-",
+    ])
+    stats = _parse_loudnorm_json(p1.stderr)
+    af = _build_linear_loudnorm_af(stats, config)
+    est_lufs: Optional[float] = round(float(target_i), 2)
+    if stats:
+        try:
+            if float(stats.get("input_i", -99.0)) <= -70.0:
+                est_lufs = None
+        except (TypeError, ValueError):
+            pass
+    return af, est_lufs
+
+
+def normalize_slice_to_lufs(
+    source_media: Path,
+    start_sec: float,
+    duration_sec: float,
+    output_wav: Path,
+    config: AppConfig,
+) -> Tuple[Path, Optional[float]]:
+    """Directly slice & 2-pass loudness-normalize [start_sec, start_sec + duration_sec] from source_media without intermediate WAV."""
+    af, _ = build_slice_loudnorm_filter(source_media, start_sec, duration_sec, config)
+    output_wav.parent.mkdir(parents=True, exist_ok=True)
+    p2 = run_ffmpeg([
+        "-ss", f"{start_sec:.3f}",
+        "-t", f"{duration_sec:.3f}",
+        "-i", str(source_media),
+        "-vn",
+        "-af", f"{af}:print_format=json",
+        "-ar", "48000",
+        "-ac", "2",
+        "-c:a", "pcm_s16le",
+        str(output_wav),
+    ])
+    measured_after = parse_loudnorm_output_lufs(p2.stderr)
+    if measured_after is None:
+        measured_after = measure_integrated_lufs(output_wav)
+    return output_wav, measured_after
+
+
 def normalize_to_lufs(
     input_wav: Path,
     output_wav: Path,
@@ -61,23 +153,7 @@ def normalize_to_lufs(
         "-",
     ])
     stats = _parse_loudnorm_json(p1.stderr)
-
-    if stats and all(k in stats for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")):
-        try:
-            in_i = float(stats["input_i"])
-            if in_i > -70.0:
-                af = (
-                    f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:linear=true:"
-                    f"measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:"
-                    f"measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:"
-                    f"offset={stats['target_offset']}"
-                )
-            else:
-                af = f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}"
-        except ValueError:
-            af = f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}"
-    else:
-        af = f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}"
+    af = _build_linear_loudnorm_af(stats, config)
 
     p2 = run_ffmpeg([
         "-i", str(input_wav),
@@ -88,15 +164,7 @@ def normalize_to_lufs(
         str(output_wav),
     ])
 
-    measured_after: Optional[float] = None
-    stats_after = _parse_loudnorm_json(p2.stderr)
-    if stats_after and "output_i" in stats_after:
-        try:
-            val = float(stats_after["output_i"])
-            if val > -90.0:
-                measured_after = round(val, 2)
-        except (ValueError, TypeError):
-            measured_after = None
+    measured_after = parse_loudnorm_output_lufs(p2.stderr)
     if measured_after is None:
         measured_after = measure_integrated_lufs(output_wav)
     return output_wav, measured_after

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple
 
 from shortsforge.config import AppConfig
@@ -168,10 +169,12 @@ def generate_verified_hooks(
             user_prompt=user_prompt,
         )
         raw_variants = resp.get("variants", []) if isinstance(resp, dict) else []
+        raw_slice = list(enumerate(raw_variants[: config.hook.variants_count], start=1))
         verified_variants: List[HookVariant] = []
         failed_notes: List[str] = []
 
-        for idx, item in enumerate(raw_variants[: config.hook.variants_count], start=1):
+        def _verify_one(pair: Tuple[int, dict]) -> HookVariant:
+            idx, item = pair
             text = str(item.get("text") or "").strip().strip('"').strip("'")
             retention = int(max(0, min(100, item.get("predicted_retention", max(60, 95 - idx * 4)))))
             ver = verify_hook_against_transcript(
@@ -182,16 +185,22 @@ def generate_verified_hooks(
                 deceased_subject=deceased_subject,
                 cache_namespace=f"hook_verify_{candidate.id}_a{attempt}_v{idx}",
             )
-            verified_variants.append(
-                HookVariant(
-                    rank=idx,
-                    text=text,
-                    predicted_retention=retention,
-                    verification=ver,
-                )
+            return HookVariant(
+                rank=idx,
+                text=text,
+                predicted_retention=retention,
+                verification=ver,
             )
-            if not ver.passed:
-                failed_notes.append(f"Variant #{idx} ('{text}'): {ver.reason}")
+
+        if len(raw_slice) > 1 and getattr(llm, "is_remote_provider", lambda: False)():
+            with ThreadPoolExecutor(max_workers=min(5, len(raw_slice))) as pool:
+                verified_variants = list(pool.map(_verify_one, raw_slice))
+        else:
+            verified_variants = [_verify_one(pair) for pair in raw_slice]
+
+        for hv in verified_variants:
+            if not hv.verification.passed:
+                failed_notes.append(f"Variant #{hv.rank} ('{hv.text}'): {hv.verification.reason}")
 
         passing = [v for v in verified_variants if v.verification.passed]
         failing = [v for v in verified_variants if not v.verification.passed]

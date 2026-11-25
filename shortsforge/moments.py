@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
 from shortsforge.config import AppConfig
@@ -716,6 +717,7 @@ def find_best_moments(
     windows = _chunk_sentences_by_window(transcript.sentences, win_sec, ov_sec)
     per_window_n = max(4, min(max_cap, int(round(max_cap * 2.0 / max(1, len(windows))))))
 
+    window_prompts: List[Tuple[int, str]] = []
     for w_idx, chunk in enumerate(windows):
         lines = [
             f"[{s.start:.2f}-{s.end:.2f}] ({s.speaker}) {s.text}"
@@ -729,11 +731,23 @@ def find_best_moments(
             f"from this transcript:\n\n"
             + "\n".join(lines)
         )
-        resp = llm.complete_json(
-            namespace=f"moments_w{w_idx}",
+        window_prompts.append((w_idx, user_prompt))
+
+    def _query_window(pair: Tuple[int, str]) -> object:
+        idx_w, prompt_w = pair
+        return llm.complete_json(
+            namespace=f"moments_w{idx_w}",
             system_prompt=MOMENTS_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
+            user_prompt=prompt_w,
         )
+
+    if len(window_prompts) > 1 and getattr(llm, "is_remote_provider", lambda: False)():
+        with ThreadPoolExecutor(max_workers=min(6, len(window_prompts))) as pool:
+            window_responses = list(pool.map(_query_window, window_prompts))
+    else:
+        window_responses = [_query_window(p) for p in window_prompts]
+
+    for resp in window_responses:
         items = resp.get("candidates", []) if isinstance(resp, dict) else []
         for item in items:
             try:
@@ -853,3 +867,97 @@ def find_best_moments(
         cand.id = f"clip_{idx:02d}"
 
     return deduped
+
+
+def _fmt_mmss(seconds: float) -> str:
+    sec = max(0, int(round(seconds)))
+    m, s = divmod(sec, 60)
+    return f"{m}:{s:02d}"
+
+
+def build_batch_parts(
+    transcript: Transcript,
+    metadata: VideoMetadata,
+    part_duration_sec: float = 0.0,
+    max_parts: int = 0,
+) -> List[ClipCandidate]:
+    """Split an entire video sequentially into timed parts (e.g. 20m @ 5m = 4 parts) snapped cleanly to sentences."""
+    sents = transcript.sentences or []
+    last_sent_end = sents[-1].end if sents else 0.0
+    total_dur = max(float(metadata.duration or 0.0), float(transcript.duration or 0.0), float(last_sent_end))
+    if total_dur <= 1.0:
+        return []
+
+    max_cap = 50 if max_parts <= 0 else max(1, min(50, int(max_parts)))
+    if part_duration_sec <= 0.0:
+        if max_parts > 0:
+            part_len = max(5.0, total_dur / max_cap)
+        else:
+            part_len = min(300.0, max(30.0, total_dur / 4.0))
+    else:
+        part_len = max(5.0, float(part_duration_sec))
+
+    parts: List[ClipCandidate] = []
+    cur_start = 0.0
+    part_idx = 1
+
+    while cur_start < total_dur - 1.0 and part_idx <= max_cap:
+        target_end = min(total_dur, cur_start + part_len)
+        snapped_end = target_end
+
+        tail_rem = total_dur - target_end
+        if 0.0 < tail_rem < min(8.0, part_len * 0.15) and (max_parts <= 0 or part_idx == max_cap):
+            snapped_end = total_dur
+        elif target_end < total_dur and sents:
+            snap_tol = min(12.0, part_len * 0.12)
+            min_ok_end = cur_start + max(4.0, part_len * 0.5)
+            cand_ends = [
+                s.end
+                for s in sents
+                if min_ok_end <= s.end <= total_dur and abs(s.end - target_end) <= snap_tol
+            ]
+            if cand_ends:
+                snapped_end = min(cand_ends, key=lambda e: abs(e - target_end))
+
+        part_sents = [s for s in sents if s.end >= cur_start and s.start <= snapped_end]
+        clip_text = " ".join(re.sub(r"^>>\s*", "", s.text).strip() for s in part_sents).strip()
+
+        key_quote = ""
+        for s in part_sents:
+            cleaned = re.sub(r"^>>\s*", "", s.text).strip()
+            if len(cleaned.split()) >= 4:
+                key_quote = cleaned[:140]
+                break
+        if not key_quote:
+            key_quote = f"Part {part_idx} of {metadata.title or 'Video'}"[:140]
+
+        p_start = cur_start
+        p_end = min(snapped_end, cur_start + 3.0)
+        bd = ScoreBreakdown(
+            emotional_peak=88,
+            quotable_statement=90,
+            humor_payoff=75,
+            self_contained=92,
+            clean_boundaries=95,
+        )
+        mood = detect_clip_mood(clip_text, bd, metadata.title) if clip_text else "tense"
+
+        parts.append(
+            ClipCandidate(
+                id=f"clip_{part_idx:02d}",
+                start=round(cur_start, 3),
+                end=round(snapped_end, 3),
+                score=95,
+                score_breakdown=bd,
+                reason=f"Part {part_idx} ({_fmt_mmss(cur_start)}–{_fmt_mmss(snapped_end)})",
+                key_quote=key_quote,
+                transcript_text=clip_text or key_quote,
+                peak_start=round(p_start, 3),
+                peak_end=round(p_end, 3),
+                mood=mood,
+            )
+        )
+        cur_start = snapped_end
+        part_idx += 1
+
+    return parts

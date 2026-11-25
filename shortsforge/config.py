@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import platform
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
 
@@ -22,6 +23,8 @@ class IngestConfig(BaseModel):
     max_video_height: int = 2160
     min_preferred_height: int = 1080
     prefer_h264: bool = False
+    clip_only_download: bool = True
+    clip_download_workers: int = Field(default=4, ge=1, le=6)
     concurrent_fragments: int = 6
     retries: int = 10
     cookies_from_browser: str = ""
@@ -97,6 +100,7 @@ class HookConfig(BaseModel):
 
 
 class ReframeConfig(BaseModel):
+    aspect_ratio: Literal["9:16", "16:9"] = "9:16"
     output_width: int = 1080
     output_height: int = 1920
     output_fps: int = 30
@@ -134,7 +138,11 @@ class OverlaysConfig(BaseModel):
     attention_card_text: str = ""
     attention_card_position: Literal["center", "upper", "lower"] = "center"
     attention_card_duration_sec: float = 4.0
-    attention_card_style: Literal["white_box", "white_pill", "dark_neon"] = "white_box"
+    attention_card_style: Literal["white_box", "white_pill", "dark_neon", "glass_dark", "gold_luxury", "red_alert"] = "white_box"
+    attention_card_font_style: Literal["bold_display", "impact", "clean_sans", "editorial_serif", "mono_tech"] = "bold_display"
+    attention_card_text_color: Literal["auto", "black", "white", "purple", "gold", "red", "blue", "green"] = "auto"
+    attention_card_font_size: Literal["small", "medium", "large", "xl"] = "medium"
+    attention_card_text_case: Literal["normal", "upper", "title"] = "normal"
 
 
 class AudioConfig(BaseModel):
@@ -164,6 +172,7 @@ class ExportConfig(BaseModel):
     sharpen_strength: float = 0.22
     mirror_video: bool = False
     video_filters: List[str] = Field(default_factory=list)
+    playback_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     lossless_intermediates: bool = True
     audio_bitrate: str = "256k"
     rights_note: str = (
@@ -200,18 +209,36 @@ class AppConfig(BaseModel):
         return self.resolve_path(self.paths.outputs_dir)
 
 
-def load_config(config_path: Optional[Path | str] = None) -> AppConfig:
-    """Load .env and config.yaml into an AppConfig instance."""
-    root = Path.cwd().resolve()
-    env_file = root / ".env"
-    if env_file.exists():
+def apply_aspect_ratio(config: AppConfig, aspect_ratio: str) -> None:
+    """Configure output dimensions cleanly for 9:16 vertical or 16:9 widescreen export."""
+    if str(aspect_ratio).strip() == "16:9":
+        config.reframe.aspect_ratio = "16:9"
+        config.reframe.output_width = 1920
+        config.reframe.output_height = 1080
+    else:
+        config.reframe.aspect_ratio = "9:16"
+        config.reframe.output_width = 1080
+        config.reframe.output_height = 1920
+
+
+@lru_cache(maxsize=8)
+def _load_config_cached(
+    cfg_path_str: str,
+    cfg_mtime_ns: int,
+    env_path_str: str,
+    env_mtime_ns: int,
+    fallback_root_str: str,
+) -> AppConfig:
+    env_file = Path(env_path_str)
+    if env_mtime_ns > 0 and env_file.exists():
         load_dotenv(dotenv_path=env_file, override=False)
     else:
         load_dotenv(override=False)
 
-    cfg_file = Path(config_path).resolve() if config_path else (root / "config.yaml")
+    root = Path(fallback_root_str)
+    cfg_file = Path(cfg_path_str)
     data: Dict = {}
-    if cfg_file.exists():
+    if cfg_mtime_ns > 0 and cfg_file.exists():
         with cfg_file.open("r", encoding="utf-8") as fh:
             loaded = yaml.safe_load(fh)
             if isinstance(loaded, dict):
@@ -221,6 +248,19 @@ def load_config(config_path: Optional[Path | str] = None) -> AppConfig:
     cfg = AppConfig.model_validate(data)
     cfg.root_dir = root
     return cfg
+
+
+def load_config(config_path: Optional[Path | str] = None) -> AppConfig:
+    """Load .env and config.yaml into an isolated AppConfig instance (mtime-cached)."""
+    root = Path.cwd().resolve()
+    env_file = root / ".env"
+    cfg_file = Path(config_path).resolve() if config_path else (root / "config.yaml")
+    env_mtime = env_file.stat().st_mtime_ns if env_file.exists() else 0
+    cfg_mtime = cfg_file.stat().st_mtime_ns if cfg_file.exists() else 0
+    cached = _load_config_cached(str(cfg_file), cfg_mtime, str(env_file), env_mtime, str(root))
+    copy_cfg = cached.model_copy(deep=True)
+    copy_cfg.root_dir = cached.root_dir
+    return copy_cfg
 
 
 def get_env_key(env_var: str) -> str:
@@ -286,37 +326,47 @@ def _system_font_dirs(custom_dir: Optional[Path] = None) -> List[Path]:
     return [d for d in dirs if d.exists()]
 
 
-def resolve_font(
-    config: AppConfig,
-    bold: bool = True,
-    preferred_name: str = "",
-) -> Tuple[Optional[Path], str]:
-    """Dynamically locate a cross-platform font file and family name (no hardcoded paths)."""
-    custom_dir = config.resolve_path(config.paths.fonts_dir) if config.paths.fonts_dir else None
-    search_dirs = _system_font_dirs(custom_dir)
+@lru_cache(maxsize=4)
+def _scan_font_map(search_dirs: Tuple[str, ...]) -> Dict[str, Path]:
+    lower_map: Dict[str, Path] = {}
+    for d_str in search_dirs:
+        d = Path(d_str)
+        try:
+            for font_file in d.rglob("*"):
+                if font_file.suffix.lower() in {".ttf", ".otf", ".ttc"} and font_file.is_file():
+                    key = font_file.name.lower()
+                    if key not in lower_map:
+                        lower_map[key] = font_file
+        except PermissionError:
+            continue
+    return lower_map
 
+
+@lru_cache(maxsize=32)
+def _resolve_font_cached(
+    search_dirs: Tuple[str, ...],
+    bold: bool,
+    preferred_name: str,
+) -> Tuple[Optional[Path], str]:
     if preferred_name:
         maybe_path = Path(preferred_name)
         if maybe_path.is_file():
             return maybe_path, maybe_path.stem
-        for d in search_dirs:
+        lower_map = _scan_font_map(search_dirs)
+        pref_low = preferred_name.lower()
+        for ext in ("", ".ttf", ".otf", ".ttc"):
+            hit = lower_map.get(f"{pref_low}{ext}")
+            if hit is not None:
+                return hit, preferred_name
+        for d_str in search_dirs:
+            d = Path(d_str)
             for ext in ("", ".ttf", ".otf", ".ttc"):
                 matches = list(d.rglob(f"{preferred_name}{ext}"))
                 if matches:
                     return matches[0], preferred_name
 
     candidates = _BOLD_FONT_CANDIDATES if bold else _REGULAR_FONT_CANDIDATES
-    lower_map: Dict[str, Path] = {}
-    for d in search_dirs:
-        try:
-            for font_file in d.rglob("*"):
-                if font_file.is_file() and font_file.suffix.lower() in {".ttf", ".otf", ".ttc"}:
-                    key = font_file.name.lower()
-                    if key not in lower_map:
-                        lower_map[key] = font_file
-        except PermissionError:
-            continue
-
+    lower_map = _scan_font_map(search_dirs)
     for filename, family in candidates:
         found = lower_map.get(filename.lower())
         if found:
@@ -325,3 +375,14 @@ def resolve_font(
     for found in lower_map.values():
         return found, found.stem
     return None, "Sans"
+
+
+def resolve_font(
+    config: AppConfig,
+    bold: bool = True,
+    preferred_name: str = "",
+) -> Tuple[Optional[Path], str]:
+    """Dynamically locate a cross-platform font file and family name (cached across calls)."""
+    custom_dir = config.resolve_path(config.paths.fonts_dir) if config.paths.fonts_dir else None
+    search_dirs = tuple(str(d) for d in _system_font_dirs(custom_dir))
+    return _resolve_font_cached(search_dirs, bold, preferred_name)

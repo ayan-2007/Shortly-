@@ -11,4 +11,5 @@ outputs/
 build/
 dist/
 release/
+release.zip
 shortly.log

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from shortsforge.config import AppConfig, get_env_key
@@ -325,16 +327,32 @@ def _extract_video_specific_metadata(
 
 
 _CLOUD_PROVIDER_DISABLED: Dict[str, bool] = {}
+_CLIENT_LOCK = threading.Lock()
+_GEMINI_CLIENTS: Dict[str, Any] = {}
+_CLAUDE_CLIENTS: Dict[str, Any] = {}
 
 
 class LLMClient:
-    """Unified JSON-oriented LLM wrapper with disk caching and automatic zero-key fallback."""
+    """Unified JSON-oriented LLM wrapper with disk caching, connection pooling, and zero-key fallback."""
 
     def __init__(self, config: AppConfig, workspace: Optional[ProjectWorkspace] = None) -> None:
         self.config = config
         self.workspace = workspace
         self.provider = config.llm.provider
+        self._tls = threading.local()
         self.last_cache_hit = False
+
+    @property
+    def last_cache_hit(self) -> bool:
+        return bool(getattr(self._tls, "last_cache_hit", False))
+
+    @last_cache_hit.setter
+    def last_cache_hit(self, value: bool) -> None:
+        self._tls.last_cache_hit = bool(value)
+
+    def is_remote_provider(self) -> bool:
+        """Return True when using a live cloud LLM API (where concurrent HTTP requests speed up throughput)."""
+        return type(self) is LLMClient and self._effective_provider() in ("gemini", "claude")
 
     def _effective_provider(self) -> str:
         """Use configured cloud LLM if its API key is set in .env and healthy; otherwise transparently use local engine."""
@@ -387,7 +405,7 @@ class LLMClient:
                 result = self._call_gemini(system_prompt, user_prompt)
             except Exception as exc:  # noqa: BLE001
                 err_s = str(exc).upper()
-                if any(tok in err_s for tok in ("404", "NOT_FOUND", "401", "403", "429", "PERMISSION_DENIED", "INVALID_ARGUMENT", "RESOURCE_EXHAUSTED", "CERTIFICATE_VERIFY_FAILED")):
+                if any(tok in err_s for tok in ("404", "NOT_FOUND", "401", "403", "PERMISSION_DENIED", "INVALID_ARGUMENT", "CERTIFICATE_VERIFY_FAILED")):
                     _CLOUD_PROVIDER_DISABLED["gemini"] = True
                 result = None
         elif eff_provider == "claude":
@@ -395,7 +413,7 @@ class LLMClient:
                 result = self._call_claude(system_prompt, user_prompt)
             except Exception as exc:  # noqa: BLE001
                 err_s = str(exc).upper()
-                if any(tok in err_s for tok in ("404", "401", "403", "429", "NOT_FOUND", "AUTHENTICATION", "RATE_LIMIT")):
+                if any(tok in err_s for tok in ("404", "401", "403", "NOT_FOUND", "AUTHENTICATION")):
                     _CLOUD_PROVIDER_DISABLED["claude"] = True
                 result = None
 
@@ -417,9 +435,15 @@ class LLMClient:
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=api_key)
+        with _CLIENT_LOCK:
+            client = _GEMINI_CLIENTS.get(api_key)
+            if client is None:
+                client = genai.Client(api_key=api_key)
+                _GEMINI_CLIENTS[api_key] = client
+
         last_err: Optional[Exception] = None
-        for _ in range(max(1, self.config.llm.max_retries + 1)):
+        total_tries = max(1, self.config.llm.max_retries + 1)
+        for attempt in range(total_tries):
             try:
                 response = client.models.generate_content(
                     model=self.config.llm.gemini_model,
@@ -434,6 +458,8 @@ class LLMClient:
                 return _extract_json_block(text)
             except Exception as exc:  # noqa: BLE001
                 last_err = exc
+                if attempt < total_tries - 1:
+                    time.sleep(0.35 * (attempt + 1))
         raise LLMError(f"Gemini call failed after retries: {last_err}") from last_err
 
     def _call_claude(self, system_prompt: str, user_prompt: str) -> Any:
@@ -442,9 +468,15 @@ class LLMClient:
             raise LLMError("ANTHROPIC_API_KEY is not set.")
         import anthropic
 
-        client = anthropic.Anthropic(api_key=api_key)
+        with _CLIENT_LOCK:
+            client = _CLAUDE_CLIENTS.get(api_key)
+            if client is None:
+                client = anthropic.Anthropic(api_key=api_key)
+                _CLAUDE_CLIENTS[api_key] = client
+
         last_err: Optional[Exception] = None
-        for _ in range(max(1, self.config.llm.max_retries + 1)):
+        total_tries = max(1, self.config.llm.max_retries + 1)
+        for attempt in range(total_tries):
             try:
                 message = client.messages.create(
                     model=self.config.llm.claude_model,
@@ -460,6 +492,8 @@ class LLMClient:
                 return _extract_json_block("\n".join(parts))
             except Exception as exc:  # noqa: BLE001
                 last_err = exc
+                if attempt < total_tries - 1:
+                    time.sleep(0.35 * (attempt + 1))
         raise LLMError(f"Claude call failed after retries: {last_err}") from last_err
 
     def _local_smart_response(self, namespace: str, user_prompt: str) -> Any:

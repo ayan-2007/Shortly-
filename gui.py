@@ -21,11 +21,21 @@ def _bootstrap_runtime() -> None:
         app_dir = Path(__file__).resolve().parent
 
     os.chdir(app_dir)
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
 
-    # Prepend bundled bin/ (ffmpeg, ffprobe) to PATH so yt-dlp and subprocesses find them
+    # Prepend bundled bin/ and WinGet Links to PATH so yt-dlp and subprocesses find ffmpeg instantly
+    extra_paths = []
     bin_dir = app_dir / "bin"
     if bin_dir.is_dir():
-        os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+        extra_paths.append(str(bin_dir))
+    local_app = os.environ.get("LOCALAPPDATA", "")
+    if local_app:
+        winget_links = Path(local_app) / "Microsoft" / "WinGet" / "Links"
+        if winget_links.is_dir():
+            extra_paths.append(str(winget_links))
+    if extra_paths:
+        os.environ["PATH"] = os.pathsep.join(extra_paths) + os.pathsep + os.environ.get("PATH", "")
 
     # Ensure .env exists on first run
     env_file = app_dir / ".env"

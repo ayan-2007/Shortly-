@@ -222,12 +222,14 @@ def _build_word_dialogue_events(
     center_x: int,
     center_y: int,
     min_floor: float = 0.0,
+    speed: float = 1.0,
 ) -> Tuple[List[str], float]:
-    """Emit Layer-0 animated word-by-word ASS Dialogue events aligned cleanly to dest_offset."""
+    """Emit Layer-0 animated word-by-word ASS Dialogue events aligned cleanly to dest_offset and playback speed."""
+    spd = max(0.5, min(2.0, float(speed or 1.0)))
     shifted_words: List[WordTimestamp] = []
     for w in words:
-        rel_start = (w.start - src_start) + dest_offset
-        rel_end = (w.end - src_start) + dest_offset
+        rel_start = ((w.start - src_start) / spd) + dest_offset
+        rel_end = ((w.end - src_start) / spd) + dest_offset
         if rel_end <= dest_offset:
             continue
         rel_start = max(dest_offset, rel_start)
@@ -236,7 +238,7 @@ def _build_word_dialogue_events(
             WordTimestamp(word=w.word, start=round(rel_start, 3), end=round(rel_end, 3), probability=w.probability)
         )
 
-    groups = group_caption_words(shifted_words, words_per_group=words_per_group)
+    groups = group_caption_words(shifted_words, words_per_group=words_per_group, max_pause_sec=0.55 / spd)
     dialogue_lines: List[str] = []
     prev_event_end = min_floor
 
@@ -379,13 +381,26 @@ def _build_kinetic_hook_events(
 
 
 def resolve_caption_center_y(config: AppConfig) -> int:
-    """Resolve the vertical Y coordinate on the 1080x1920 canvas for the active caption position preset."""
+    """Resolve the vertical Y coordinate on the active canvas (9:16 portrait or 16:9 widescreen) for captions."""
+    play_x = config.reframe.output_width
     play_y = config.reframe.output_height
+    is_landscape = play_x > play_y
     custom_y = getattr(config.captions, "custom_y", None)
     if custom_y is not None:
-        return max(220, min(play_y - 180, int(custom_y)))
+        return max(100 if is_landscape else 220, min(play_y - (90 if is_landscape else 180), int(custom_y)))
 
     pos = str(getattr(config.captions, "position", "bottom") or "bottom").strip().lower()
+    if is_landscape:
+        if pos == "center":
+            return play_y // 2
+        if pos == "lower_mid":
+            return int(round(play_y * 0.68))
+        if pos == "upper_mid":
+            return int(round(play_y * 0.34))
+        if pos == "top":
+            return int(round(play_y * 0.16))
+        return int(round(play_y * 0.84))
+
     if pos == "center":
         return play_y // 2
     if pos == "lower_mid":
@@ -407,8 +422,9 @@ def build_ass_captions(
     hook_words: Optional[List[WordTimestamp]] = None,
     hook_start: float = 0.0,
     hook_banner_duration: float = 0.0,
+    speed: float = 1.0,
 ) -> str:
-    """Generate an Iman Gadzhi / Hormozi / Documentary-style elastically animated ASS subtitle document for 1080x1920."""
+    """Generate an Iman Gadzhi / Hormozi / Documentary-style elastically animated ASS subtitle document."""
     preset = PRESETS.get(config.captions.preset, PRESETS["iman"])
     _, auto_family = resolve_font(config, bold=True, preferred_name=config.captions.font_name)
     font_family = config.captions.font_name or auto_family
@@ -424,10 +440,33 @@ def build_ass_captions(
 
     play_x = config.reframe.output_width
     play_y = config.reframe.output_height
+    is_landscape = play_x > play_y
     center_x = play_x // 2
     center_y = resolve_caption_center_y(config)
 
-    hook_font_size = max(64, int(round(config.captions.font_size * 0.82)))
+    spd = max(0.5, min(2.0, float(speed or 1.0)))
+    scaled_offset = time_offset / spd
+    scaled_hook_dur = hook_banner_duration / spd
+
+    if is_landscape:
+        eff_font_size = max(48, int(round(config.captions.font_size * 0.72)))
+        hook_font_size = max(48, int(round(config.captions.font_size * 0.62)))
+        eff_outline = round(preset.outline_width * 0.78, 1)
+        eff_shadow = round(preset.shadow_depth * 0.78, 1)
+        eff_margin_l = 120
+        eff_margin_r = 120
+        eff_margin_v = 110
+        hook_top_y = int(round(play_y * 0.22))
+    else:
+        eff_font_size = config.captions.font_size
+        hook_font_size = max(64, int(round(config.captions.font_size * 0.82)))
+        eff_outline = preset.outline_width
+        eff_shadow = preset.shadow_depth
+        eff_margin_l = config.captions.safe_margin_left
+        eff_margin_r = config.captions.safe_margin_right
+        eff_margin_v = config.captions.safe_margin_bottom
+        hook_top_y = 380
+
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {play_x}
@@ -437,7 +476,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_family},{config.captions.font_size},{preset.primary_bgr},{active_color},{preset.outline_bgr},{preset.shadow_bgr},-1,0,0,0,100,100,{preset.letter_spacing},0,{preset.border_style},{preset.outline_width},{preset.shadow_depth},5,{config.captions.safe_margin_left},{config.captions.safe_margin_right},{config.captions.safe_margin_bottom},1
+Style: Default,{font_family},{eff_font_size},{preset.primary_bgr},{active_color},{preset.outline_bgr},{preset.shadow_bgr},-1,0,0,0,100,100,{preset.letter_spacing},0,{preset.border_style},{eff_outline},{eff_shadow},5,{eff_margin_l},{eff_margin_r},{eff_margin_v},1
 Style: HookTitle,{font_family},{hook_font_size},&H00FFFFFF,{active_color},&H0006070C,&H78000000,-1,0,0,0,100,100,{preset.letter_spacing + 1},0,1,9.5,7.0,5,72,72,220,1
 
 [Events]
@@ -449,16 +488,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     # Cold-open spoken captions (only burn opening title text if explicitly enabled; off by default for clean framing)
     show_title = bool(getattr(config.hook, "show_opening_title", False))
-    if hook_banner_duration > 0.2:
+    if scaled_hook_dur > 0.2:
         if show_title and hook_text:
             hk_evs = _build_kinetic_hook_events(
                 hook_text=hook_text,
-                hook_dur=hook_banner_duration,
+                hook_dur=scaled_hook_dur,
                 preset=preset,
                 keywords=keywords,
                 active_color=active_color,
                 center_x=center_x,
-                top_y=380,
+                top_y=hook_top_y,
             )
             dialogue_lines.extend(hk_evs)
 
@@ -475,13 +514,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 center_x=center_x,
                 center_y=center_y,
                 min_floor=0.0,
+                speed=spd,
             )
             dialogue_lines.extend(hk_lines)
 
     main_lines, _ = _build_word_dialogue_events(
         words=clip_words,
         src_start=clip_start,
-        dest_offset=time_offset,
+        dest_offset=scaled_offset,
         preset=preset,
         keywords=keywords,
         active_color=active_color,
@@ -489,7 +529,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         words_per_group=config.captions.words_per_group,
         center_x=center_x,
         center_y=center_y,
-        min_floor=max(floor_t, time_offset),
+        min_floor=max(floor_t, scaled_offset),
+        speed=spd,
     )
     dialogue_lines.extend(main_lines)
 
@@ -507,6 +548,7 @@ def write_ass_captions(
     hook_words: Optional[List[WordTimestamp]] = None,
     hook_start: float = 0.0,
     hook_banner_duration: float = 0.0,
+    speed: float = 1.0,
 ) -> Path:
     """Write ASS subtitle file to disk."""
     output_ass.parent.mkdir(parents=True, exist_ok=True)
@@ -520,6 +562,7 @@ def write_ass_captions(
         hook_words=hook_words,
         hook_start=hook_start,
         hook_banner_duration=hook_banner_duration,
+        speed=speed,
     )
     output_ass.write_text(content, encoding="utf-8")
     return output_ass

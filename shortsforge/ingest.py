@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
 import shutil
+import threading
 import time
 import urllib.request
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from shortsforge.config import AppConfig
 from shortsforge.ffmpeg_utils import extract_stream_info, get_ffmpeg_bin, probe_media, run_ffmpeg
-from shortsforge.models import VideoMetadata
+from shortsforge.models import ClipCandidate, VideoMetadata
 from shortsforge.state import ProjectWorkspace
 
 
@@ -147,6 +151,61 @@ def auto_detect_person_from_title(title: str, channel: str = "", description: st
     return " ".join(w.capitalize() for w in words) or "Featured Speaker"
 
 
+_INFO_CACHE_TTL_SEC = 600.0
+_INFO_CACHE_LOCK = threading.Lock()
+_INFO_CACHE: Dict[Tuple[str, str], Tuple[float, Dict]] = {}
+
+
+def _build_ydl_probe_opts(config: AppConfig) -> Dict:
+    ffmpeg_dir = str(Path(get_ffmpeg_bin()).parent)
+    opts: Dict = {
+        "ffmpeg_location": ffmpeg_dir,
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+    }
+    js_runtimes = _detect_js_runtimes()
+    if js_runtimes:
+        opts["js_runtimes"] = js_runtimes
+        opts["remote_components"] = ["ejs:github"]
+    cookies_browser = config.ingest.cookies_from_browser.strip()
+    if cookies_browser:
+        opts["cookiesfrombrowser"] = (cookies_browser,)
+    return opts
+
+
+def _extract_url_info_cached(
+    url: str,
+    config: AppConfig,
+    force_refresh: bool = False,
+) -> Dict:
+    """Extract yt-dlp media metadata once and cache it for 10 minutes across auto-detect, ingest, and clip downloads."""
+    yt_id = extract_youtube_id(url)
+    canonical = f"yt:{yt_id}" if yt_id else url.strip()
+    cache_key = (canonical, config.ingest.cookies_from_browser.strip())
+
+    if not force_refresh:
+        with _INFO_CACHE_LOCK:
+            cached = _INFO_CACHE.get(cache_key)
+            if cached is not None and (time.time() - cached[0]) < _INFO_CACHE_TTL_SEC:
+                return cached[1]
+
+    import yt_dlp
+
+    opts = _build_ydl_probe_opts(config)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as exc:  # noqa: BLE001
+        raise _classify_yt_dlp_error(exc, url) from exc
+
+    if isinstance(info, dict):
+        with _INFO_CACHE_LOCK:
+            _INFO_CACHE[cache_key] = (time.time(), info)
+        return info
+    raise IngestError(f"Failed to retrieve metadata for URL: {url}")
+
+
 def auto_detect_project_and_person(source: str, config: AppConfig) -> Tuple[str, str, str, str]:
     """Given ONLY a URL or file path, return (project_slug, person_name, show_name, year).
 
@@ -178,16 +237,8 @@ def auto_detect_project_and_person(source: str, config: AppConfig) -> Tuple[str,
                     continue
 
     if is_url(source):
-        import yt_dlp
-
-        ydl_opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
-        js_rt = _detect_js_runtimes()
-        if js_rt:
-            ydl_opts["js_runtimes"] = js_rt
-            ydl_opts["remote_components"] = ["ejs:github"]
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(source, download=False)
+            info = _extract_url_info_cached(source, config)
             title = str(info.get("title") or "interview")
             channel = str(info.get("channel") or info.get("uploader") or "")
             desc = str(info.get("description") or "")
@@ -212,6 +263,7 @@ def extract_wav_audio(video_path: Path, output_wav: Path) -> Path:
     if output_wav.exists() and output_wav.stat().st_size > 1024:
         return output_wav
     run_ffmpeg([
+        "-threads", "0",
         "-i", str(video_path),
         "-vn",
         "-ac", "1",
@@ -233,13 +285,15 @@ def _detect_js_runtimes() -> Dict[str, Dict[str, str]]:
 
 
 def _build_format_selector(config: AppConfig, duration_sec: float = 0.0) -> str:
-    """Build an original-quality-preserving format selector (4K/1440p on normal videos, 1440p/1080p minimum on long podcasts)."""
+    """Build a fast, HD-preserving format selector prioritizing direct HTTPS DASH streams ahead of throttled HLS."""
     h = max(1080, int(config.ingest.max_video_height))
     if duration_sec > 2700 and h > 1440:
         h = 1440
     min_h = max(720, int(getattr(config.ingest, "min_preferred_height", 1080)))
     if config.ingest.prefer_h264:
         return (
+            f"bestvideo[height<={h}][height>={min_h}][vcodec^=avc1][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/"
+            f"bestvideo[height<={h}][height>={min_h}][vcodec!^=av01][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/"
             f"bestvideo[height<={h}][height>={min_h}][vcodec^=avc1]+bestaudio[ext=m4a]/"
             f"bestvideo[height<={h}][height>={min_h}][vcodec!^=av01]+bestaudio/"
             f"bestvideo[height<={h}][vcodec^=avc1]+bestaudio[ext=m4a]/"
@@ -247,14 +301,211 @@ def _build_format_selector(config: AppConfig, duration_sec: float = 0.0) -> str:
             f"bestvideo[height<={h}]+bestaudio/"
             f"best[height<={h}]/best"
         )
-    # Prioritize maximum crispness (2160p/1440p/1080p VP9 or H.264, avoiding slow AV1 software decode)
+    # Prioritize direct HTTPS DASH H.264/VP9 over throttled HLS m3u8 fragments, avoiding slow AV1 decode
     return (
+        f"bestvideo[height<={h}][height>={min_h}][vcodec^=avc1][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/"
+        f"bestvideo[height<={h}][height>={min_h}][vcodec!^=av01][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/"
+        f"bestvideo[height<={h}][height>={min_h}][vcodec!^=av01][protocol^=https]+bestaudio[protocol^=https]/"
         f"bestvideo[height<={h}][height>={min_h}][vcodec!^=av01]+bestaudio[ext=m4a]/"
         f"bestvideo[height<={h}][height>={min_h}][vcodec!^=av01]+bestaudio/"
         f"bestvideo[height<={h}][vcodec!^=av01]+bestaudio/"
         f"bestvideo[height<={h}]+bestaudio/"
         f"best[height<={h}]/best"
     )
+
+
+def _is_hls_pair(v_fmt: Optional[dict], a_fmt: Optional[dict]) -> bool:
+    """Return True when both selected formats use an HLS (m3u8) manifest."""
+    if not v_fmt or not a_fmt:
+        return False
+    v_proto = str(v_fmt.get("protocol") or "").lower()
+    a_proto = str(a_fmt.get("protocol") or "").lower()
+    return ("m3u8" in v_proto) and ("m3u8" in a_proto)
+
+
+def _select_direct_stream_formats(
+    info: dict,
+    config: AppConfig,
+    exclude_video_ids: Optional[set] = None,
+) -> Tuple[Optional[dict], Optional[dict]]:
+    """Select the fastest crisp (video_fmt, audio_fmt) stream pair for surgical clip-range downloads.
+
+    Prioritizes pure m3u8_native HLS pairs (fast keyframe fragment seeking + 0ms sync via yt-dlp ranges),
+    falling back to direct HTTPS pairs when HLS is unavailable.
+    """
+    formats = info.get("formats") or []
+    if not formats:
+        return None, None
+
+    excluded = {str(fid) for fid in (exclude_video_ids or ())}
+    duration_sec = float(info.get("duration") or 0.0)
+    max_h = max(1080, int(config.ingest.max_video_height))
+    if duration_sec > 1800 and max_h > 1440:
+        max_h = 1440
+    min_h = max(720, int(getattr(config.ingest, "min_preferred_height", 1080)))
+
+    video_pool = [
+        f
+        for f in formats
+        if f.get("url")
+        and str(f.get("format_id") or "") not in excluded
+        and f.get("vcodec") not in (None, "none")
+        and f.get("acodec") in (None, "none")
+        and 0 < int(f.get("height") or 0) <= max_h
+    ]
+    audio_pool = [
+        f
+        for f in formats
+        if f.get("url")
+        and f.get("vcodec") in (None, "none")
+        and (
+            f.get("acodec") not in (None, "none")
+            or f.get("audio_ext") not in (None, "none")
+        )
+    ]
+    if not video_pool or not audio_pool:
+        return None, None
+
+    # Priority 1: Pure m3u8 HLS pair (fast fragment seek + reliable download via yt-dlp ranges)
+    hls_audio = [f for f in audio_pool if "m3u8" in str(f.get("protocol") or "").lower()]
+    hls_video = [f for f in video_pool if "m3u8" in str(f.get("protocol") or "").lower()]
+    if hls_audio and hls_video:
+        hls_a = max(
+            hls_audio,
+            key=lambda f: (
+                1
+                if (
+                    "high" in str(f.get("format_note") or "").lower()
+                    or str(f.get("format_id") or "") == "234"
+                )
+                else 0,
+                0 if "-drc" in str(f.get("format_id") or "").lower() else 1,
+                float(f.get("abr") or f.get("tbr") or 0.0),
+            ),
+        )
+        # Sub-tier A: m3u8 avc1 (H.264, e.g. 270 1080p) >= min_h
+        hls_avc = [
+            f
+            for f in hls_video
+            if str(f.get("vcodec") or "").startswith("avc1")
+            and int(f.get("height") or 0) >= min_h
+        ]
+        if hls_avc:
+            hls_v = min(
+                hls_avc,
+                key=lambda f: (
+                    abs(int(f.get("height") or 0) - min_h),
+                    float(f.get("tbr") or 99999.0),
+                ),
+            )
+            return hls_v, hls_a
+
+        # Sub-tier B: m3u8 non-AV1 (e.g. 614 1080p VP9) >= min_h (prefer >= 1000 kbps)
+        hls_non_av1 = [
+            f
+            for f in hls_video
+            if not str(f.get("vcodec") or "").startswith("av01")
+            and int(f.get("height") or 0) >= min_h
+        ]
+        if hls_non_av1:
+            hls_ge = [f for f in hls_non_av1 if float(f.get("tbr") or 0.0) >= 1000.0] or hls_non_av1
+            hls_v = min(
+                hls_ge,
+                key=lambda f: (
+                    abs(int(f.get("height") or 0) - min_h),
+                    float(f.get("tbr") or 99999.0),
+                ),
+            )
+            return hls_v, hls_a
+
+        # Sub-tier C: m3u8 non-AV1 >= 720p
+        hls_hd = [
+            f
+            for f in hls_video
+            if not str(f.get("vcodec") or "").startswith("av01")
+            and int(f.get("height") or 0) >= 720
+        ]
+        if hls_hd:
+            hls_v = max(
+                hls_hd,
+                key=lambda f: (int(f.get("height") or 0), -float(f.get("tbr") or 0.0)),
+            )
+            return hls_v, hls_a
+
+    # Priority 2: Direct HTTPS pair fallback (for sites/videos without HLS m3u8 streams)
+    https_m4a = [
+        f
+        for f in audio_pool
+        if str(f.get("protocol") or "").startswith("https") and f.get("ext") == "m4a"
+    ]
+    if https_m4a:
+        a_fmt = max(
+            https_m4a,
+            key=lambda f: (
+                0 if "-drc" in str(f.get("format_id") or "").lower() else 1,
+                float(f.get("abr") or f.get("tbr") or 0.0),
+            ),
+        )
+    else:
+        https_audio = [f for f in audio_pool if str(f.get("protocol") or "").startswith("https")]
+        cand_audio = https_audio or audio_pool
+        a_fmt = max(cand_audio, key=lambda f: float(f.get("abr") or f.get("tbr") or 0.0))
+
+    # 1. Direct HTTPS MP4 avc1 (e.g. format 137 1080p) with min_h <= height <= max_h
+    t1 = [
+        f
+        for f in video_pool
+        if str(f.get("protocol") or "").startswith("https")
+        and f.get("ext") == "mp4"
+        and str(f.get("vcodec") or "").startswith("avc1")
+        and int(f.get("height") or 0) >= min_h
+    ]
+    if t1:
+        v_fmt = max(
+            t1,
+            key=lambda f: (int(f.get("height") or 0), min(float(f.get("tbr") or 0.0), 6000.0)),
+        )
+        return v_fmt, a_fmt
+
+    # 2. Direct HTTPS MP4 avc1 >= 720p
+    t2 = [
+        f
+        for f in video_pool
+        if str(f.get("protocol") or "").startswith("https")
+        and f.get("ext") == "mp4"
+        and str(f.get("vcodec") or "").startswith("avc1")
+        and int(f.get("height") or 0) >= 720
+    ]
+    if t2:
+        v_fmt = max(
+            t2,
+            key=lambda f: (int(f.get("height") or 0), min(float(f.get("tbr") or 0.0), 6000.0)),
+        )
+        return v_fmt, a_fmt
+
+    # 3. Direct HTTPS WebM VP9 (248 / 271) with min_h <= height <= max_h
+    t3 = [
+        f
+        for f in video_pool
+        if str(f.get("protocol") or "").startswith("https")
+        and f.get("ext") == "webm"
+        and "vp9" in str(f.get("vcodec") or "").lower()
+        and int(f.get("height") or 0) >= min_h
+    ]
+    if t3:
+        v_fmt = min(
+            t3,
+            key=lambda f: (
+                abs(int(f.get("height") or 0) - min_h),
+                float(f.get("tbr") or 99999.0),
+            ),
+        )
+        return v_fmt, a_fmt
+
+    # 4. Any non-AV1 video-only stream <= max_h (or any video-only stream)
+    t4 = [f for f in video_pool if not str(f.get("vcodec") or "").startswith("av01")] or video_pool
+    v_fmt = max(t4, key=lambda f: (int(f.get("height") or 0), float(f.get("tbr") or 0.0)))
+    return v_fmt, a_fmt
 
 
 def _fetch_yt_json3_captions(info: dict, dest_path: Path) -> Optional[Path]:
@@ -336,24 +587,38 @@ def ingest_source(
     year_override: str = "",
     force: bool = False,
     on_progress: Optional[Callable[[str], None]] = None,
+    allow_clip_only: bool = False,
 ) -> VideoMetadata:
-    """Ingest a URL or local video file, caching source media, YouTube json3 captions, 16kHz WAV, and metadata.json."""
+    """Ingest a URL or local video file, caching source media (or clip-only metadata when YouTube captions exist)."""
     if workspace.metadata_path.exists():
         existing = VideoMetadata.model_validate_json(workspace.metadata_path.read_text(encoding="utf-8"))
         same_src = existing.source == source or (
             is_url(source) and extract_youtube_id(existing.source) == extract_youtube_id(source) and extract_youtube_id(source) != ""
         )
         need_hd_upgrade = force and is_url(source) and existing.height > 0 and existing.height < 900 and config.ingest.max_video_height >= 1080
-        if same_src and not need_hd_upgrade and Path(existing.local_video_path).exists() and Path(existing.local_audio_path).exists():
+        has_full_media = bool(
+            existing.local_video_path
+            and existing.local_audio_path
+            and Path(existing.local_video_path).exists()
+            and Path(existing.local_audio_path).exists()
+        )
+        has_clip_only_cache = bool(
+            allow_clip_only
+            and not force
+            and existing.clip_only_mode
+            and (workspace.source_dir / "yt_captions.json3").exists()
+        )
+        if same_src and not need_hd_upgrade and (has_full_media or has_clip_only_cache):
             if on_progress:
-                on_progress("Loaded cached source video & audio.")
+                on_progress(
+                    "Loaded cached YouTube clip-only metadata & transcript."
+                    if (has_clip_only_cache and not has_full_media)
+                    else "Loaded cached source video & audio."
+                )
             # Enrich with YouTube word-level captions + Most Replayed heatmap if not yet cached
             if is_url(source) and (force or not (workspace.source_dir / "yt_captions.json3").exists() or not existing.heatmap):
                 try:
-                    import yt_dlp
-
-                    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
-                        info = ydl.extract_info(source, download=False)
+                    info = _extract_url_info_cached(source, config)
                     _fetch_yt_json3_captions(info, workspace.source_dir / "yt_captions.json3")
                     raw_hm = info.get("heatmap") or []
                     if raw_hm and not existing.heatmap:
@@ -379,30 +644,31 @@ def ingest_source(
                 except Exception:  # noqa: BLE001
                     pass
             return existing
-        if need_hd_upgrade and Path(existing.local_video_path).exists():
+        if need_hd_upgrade and existing.local_video_path and Path(existing.local_video_path).exists():
             if on_progress:
                 on_progress(f"Upgrading previously {existing.height}p source video to HD ({config.ingest.max_video_height}p max)...")
             Path(existing.local_video_path).unlink(missing_ok=True)
 
     if is_url(source):
-        meta = _ingest_url(source, workspace, config, on_progress=on_progress)
+        meta = _ingest_url(source, workspace, config, on_progress=on_progress, allow_clip_only=allow_clip_only)
     else:
         if on_progress:
             on_progress("Inspecting local media file...")
         meta = _ingest_local(source, workspace)
 
-    probe = probe_media(meta.local_video_path)
-    info = extract_stream_info(probe)
-    if not info["has_video"]:
-        raise IngestError(f"Input media has no video stream: {meta.local_video_path}")
-    if not info["has_audio"]:
-        raise IngestError(f"Input media has no audio stream: {meta.local_video_path}")
+    if not meta.clip_only_mode:
+        probe = probe_media(meta.local_video_path)
+        info = extract_stream_info(probe)
+        if not info["has_video"]:
+            raise IngestError(f"Input media has no video stream: {meta.local_video_path}")
+        if not info["has_audio"]:
+            raise IngestError(f"Input media has no audio stream: {meta.local_video_path}")
 
-    meta.duration = info["duration"]
-    meta.width = info["width"]
-    meta.height = info["height"]
-    meta.fps = info["fps"]
-    meta.aspect_ratio = info["aspect_ratio"]
+        meta.duration = info["duration"]
+        meta.width = info["width"]
+        meta.height = info["height"]
+        meta.fps = info["fps"]
+        meta.aspect_ratio = info["aspect_ratio"]
 
     parsed_show, parsed_air, parsed_year = extract_show_and_air_date(
         meta.title, meta.description, meta.upload_date
@@ -411,12 +677,13 @@ def ingest_source(
     meta.original_air_date = parsed_air
     meta.year = year_override or parsed_year
 
-    wav_path = workspace.source_dir / "audio_16k.wav"
-    if not wav_path.exists():
-        if on_progress:
-            on_progress(f"Extracting 16kHz audio track ({meta.duration / 60:.1f} min)...")
-        extract_wav_audio(Path(meta.local_video_path), wav_path)
-    meta.local_audio_path = str(wav_path.resolve())
+    if not meta.clip_only_mode:
+        wav_path = workspace.source_dir / "audio_16k.wav"
+        if not wav_path.exists():
+            if on_progress:
+                on_progress(f"Extracting 16kHz audio track ({meta.duration / 60:.1f} min)...")
+            extract_wav_audio(Path(meta.local_video_path), wav_path)
+        meta.local_audio_path = str(wav_path.resolve())
 
     workspace.metadata_path.write_text(meta.model_dump_json(indent=2), encoding="utf-8")
     return meta
@@ -427,40 +694,45 @@ def _ingest_url(
     workspace: ProjectWorkspace,
     config: AppConfig,
     on_progress: Optional[Callable[[str], None]] = None,
+    allow_clip_only: bool = False,
 ) -> VideoMetadata:
     import yt_dlp
 
-    ffmpeg_dir = str(Path(get_ffmpeg_bin()).parent)
-    js_runtimes = _detect_js_runtimes()
-
-    # 1. Fast metadata + json3 caption probe first (takes ~2s)
-    probe_opts: Dict = {
-        "ffmpeg_location": ffmpeg_dir,
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-    }
-    if js_runtimes:
-        probe_opts["js_runtimes"] = js_runtimes
-        probe_opts["remote_components"] = ["ejs:github"]
-    if config.ingest.cookies_from_browser.strip():
-        probe_opts["cookiesfrombrowser"] = (config.ingest.cookies_from_browser.strip(),)
+    probe_opts = _build_ydl_probe_opts(config)
 
     if on_progress:
         on_progress("Fetching YouTube video metadata & word-level captions...")
 
-    try:
-        with yt_dlp.YoutubeDL(probe_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except Exception as exc:  # noqa: BLE001
-        raise _classify_yt_dlp_error(exc, url) from exc
+    info = _extract_url_info_cached(url, config)
 
     # Save YouTube word-level json3 captions immediately if available
     j3_file = _fetch_yt_json3_captions(info, workspace.source_dir / "yt_captions.json3")
     if j3_file and on_progress:
         on_progress("Fetched YouTube word-level transcript in 1s!")
 
-    # Check if video file is already in this workspace or another project folder
+    raw_date = str(info.get("upload_date") or "")
+    formatted_date = (
+        f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}" if len(raw_date) == 8 else raw_date
+    )
+
+    heatmap = [
+        {
+            "start_time": float(h.get("start_time", 0.0)),
+            "end_time": float(h.get("end_time", 0.0)),
+            "value": float(h.get("value", 0.0)),
+        }
+        for h in (info.get("heatmap") or [])
+    ]
+    chapters = [
+        {
+            "start_time": float(c.get("start_time", 0.0)),
+            "end_time": float(c.get("end_time", 0.0)),
+            "title": str(c.get("title") or ""),
+        }
+        for c in (info.get("chapters") or [])
+    ]
+
+    # Check if full video file is already in this workspace or another project folder
     existing_files = [
         p for p in sorted(workspace.source_dir.glob("source_video.*"))
         if p.suffix.lower() in {".mp4", ".mkv", ".webm", ".mov"} and ".part" not in p.name
@@ -471,8 +743,38 @@ def _ingest_url(
         if video_path and on_progress:
             on_progress(f"Reused cached video from existing project ({video_path.name})!")
 
+    duration_sec = float(info.get("duration") or 0.0)
+    if video_path is None and allow_clip_only and j3_file is not None and duration_sec >= 240.0:
+        v_fmt, a_fmt = _select_direct_stream_formats(info, config)
+        if v_fmt and a_fmt:
+            est_w = max(2, int(v_fmt.get("width") or 1920))
+            est_h = max(2, int(v_fmt.get("height") or 1080))
+            est_fps = float(v_fmt.get("fps") or 30.0)
+            if on_progress:
+                on_progress(
+                    f"Fast transcript-first mode ({duration_sec / 60:.0f}m video): skipping full download; "
+                    "will download only selected clips after moment scoring!"
+                )
+            return VideoMetadata(
+                source=url,
+                source_type="url",
+                title=str(info.get("title") or "interview"),
+                channel=str(info.get("channel") or info.get("uploader") or ""),
+                upload_date=formatted_date,
+                description=str(info.get("description") or ""),
+                duration=duration_sec,
+                width=est_w,
+                height=est_h,
+                fps=est_fps,
+                aspect_ratio=est_w / max(1, est_h),
+                local_video_path="",
+                local_audio_path="",
+                clip_only_mode=True,
+                heatmap=heatmap,
+                chapters=chapters,
+            )
+
     if video_path is None:
-        duration_sec = float(info.get("duration") or 0.0)
         out_tmpl = str(workspace.source_dir / "source_video.%(ext)s")
         last_emit = {"t": 0.0}
 
@@ -498,7 +800,8 @@ def _ingest_url(
             "continuedl": True,
             "retries": max(3, config.ingest.retries),
             "fragment_retries": max(3, config.ingest.retries),
-            "concurrent_fragment_downloads": max(4, config.ingest.concurrent_fragments),
+            "concurrent_fragment_downloads": max(12, config.ingest.concurrent_fragments),
+            "http_chunk_size": 10 * 1024 * 1024,
             "socket_timeout": 30,
             "progress_hooks": [_progress_hook],
         }
@@ -517,28 +820,6 @@ def _ingest_url(
             raise IngestError(f"yt-dlp completed but no video file was found in {workspace.source_dir}")
         video_path = video_files[0]
 
-    raw_date = str(info.get("upload_date") or "")
-    formatted_date = (
-        f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}" if len(raw_date) == 8 else raw_date
-    )
-
-    heatmap = [
-        {
-            "start_time": float(h.get("start_time", 0.0)),
-            "end_time": float(h.get("end_time", 0.0)),
-            "value": float(h.get("value", 0.0)),
-        }
-        for h in (info.get("heatmap") or [])
-    ]
-    chapters = [
-        {
-            "start_time": float(c.get("start_time", 0.0)),
-            "end_time": float(c.get("end_time", 0.0)),
-            "title": str(c.get("title") or ""),
-        }
-        for c in (info.get("chapters") or [])
-    ]
-
     return VideoMetadata(
         source=url,
         source_type="url",
@@ -552,6 +833,281 @@ def _ingest_url(
     )
 
 
+def resolve_candidate_media(
+    candidate: ClipCandidate,
+    metadata: VideoMetadata,
+) -> Tuple[Path, Path, float, float, float, float]:
+    """Return (video_path, audio_wav_path, local_start, local_end, local_peak_start, local_peak_end)."""
+    if candidate.clip_video_path and Path(candidate.clip_video_path).is_file():
+        off = float(candidate.clip_time_offset or 0.0)
+        l_start = max(0.0, candidate.start - off)
+        l_end = max(l_start + 0.5, candidate.end - off)
+        l_pstart = max(l_start, candidate.peak_start - off)
+        l_pend = max(l_pstart + 0.1, candidate.peak_end - off)
+        aud = (
+            Path(candidate.clip_audio_path)
+            if (candidate.clip_audio_path and Path(candidate.clip_audio_path).is_file())
+            else Path(metadata.local_audio_path)
+        )
+        return Path(candidate.clip_video_path), aud, l_start, l_end, l_pstart, l_pend
+
+    return (
+        Path(metadata.local_video_path),
+        Path(metadata.local_audio_path),
+        candidate.start,
+        candidate.end,
+        candidate.peak_start,
+        candidate.peak_end,
+    )
+
+
+def download_clip_slices(
+    candidates: List[ClipCandidate],
+    metadata: VideoMetadata,
+    workspace: ProjectWorkspace,
+    config: AppConfig,
+    on_progress: Optional[Callable[[str], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> VideoMetadata:
+    """Download only the exact padded clip windows in parallel (~3-5s per clip) instead of the entire video."""
+    if not metadata.clip_only_mode or not candidates:
+        return metadata
+
+    pending = [
+        c
+        for c in candidates
+        if not (
+            c.clip_video_path
+            and Path(c.clip_video_path).is_file()
+            and Path(c.clip_video_path).stat().st_size > 4096
+            and c.clip_audio_path
+            and Path(c.clip_audio_path).is_file()
+            and Path(c.clip_audio_path).stat().st_size > 1024
+        )
+    ]
+    if not pending:
+        return metadata
+
+    clips_dir = workspace.source_dir / "clips"
+    clips_dir.mkdir(parents=True, exist_ok=True)
+
+    info = _extract_url_info_cached(metadata.source, config)
+    v_fmt, a_fmt = _select_direct_stream_formats(info, config)
+    refresh_lock = threading.Lock()
+    state_lock = threading.Lock()
+    completed_count = {"n": 0}
+    total_pending = len(pending)
+
+    if on_progress:
+        res_lbl = f"{v_fmt.get('height')}p" if v_fmt and v_fmt.get("height") else "HD"
+        on_progress(f"[3/4] Downloading {total_pending} clip slice(s) in {res_lbl} (skipping full video)...")
+
+    def _get_stream_params(force_refresh: bool = False) -> Tuple[Optional[dict], Optional[dict], str, dict]:
+        with refresh_lock:
+            cur_info = _extract_url_info_cached(metadata.source, config, force_refresh=force_refresh)
+            vf, af = _select_direct_stream_formats(cur_info, config)
+            hdrs = (vf.get("http_headers") if vf else None) or cur_info.get("http_headers") or {}
+            hdr_str = "".join(f"{k}: {v}\r\n" for k, v in hdrs.items())
+            return vf, af, hdr_str, cur_info
+
+    def _download_hls_via_ytdlp(
+        cand: ClipCandidate,
+        pad_start: float,
+        pad_end: float,
+        vf: dict,
+        af: dict,
+        cur_info: dict,
+        dest_path: Path,
+    ) -> Path:
+        import yt_dlp
+        from yt_dlp.utils import download_range_func
+
+        tmp_stem = f".{cand.id}.{uuid.uuid4().hex[:8]}"
+        out_tmpl = str(clips_dir / f"{tmp_stem}.%(ext)s")
+        ydl_opts = {
+            **_build_ydl_probe_opts(config),
+            "noprogress": True,
+            "format": f"{vf['format_id']}+{af['format_id']}",
+            "merge_output_format": "mp4",
+            "download_ranges": download_range_func(None, [(pad_start, pad_end)]),
+            "concurrent_fragment_downloads": 16,
+            "retries": max(3, config.ingest.retries),
+            "fragment_retries": max(3, config.ingest.retries),
+            "socket_timeout": 20,
+            "outtmpl": out_tmpl,
+        }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.process_ie_result(copy.deepcopy(cur_info), download=True)
+            downloaded = [
+                p
+                for p in sorted(clips_dir.glob(f"{tmp_stem}.*"))
+                if p.suffix.lower() in {".mp4", ".mkv", ".webm", ".mov"}
+                and ".part" not in p.name
+                and p.stat().st_size > 4096
+            ]
+            if not downloaded:
+                raise IngestError(f"HLS range download produced no valid file for {cand.id}")
+            dl_file = downloaded[0]
+            final_dest = dest_path.with_suffix(dl_file.suffix.lower())
+            os.replace(dl_file, final_dest)
+            return final_dest
+        finally:
+            for leftover in clips_dir.glob(f"{tmp_stem}*"):
+                leftover.unlink(missing_ok=True)
+
+    def _download_one(cand: ClipCandidate) -> bool:
+        if should_cancel and should_cancel():
+            return False
+
+        pad_start = max(0.0, cand.start - 3.0)
+        pad_end = cand.end + 3.0
+        if metadata.duration > 0:
+            pad_end = min(metadata.duration, pad_end)
+        pad_dur = max(1.0, pad_end - pad_start)
+
+        vf, af, hdr_str, cur_info = _get_stream_params(force_refresh=False)
+        clip_path = clips_dir / f"{cand.id}.mp4"
+        clip_wav = clips_dir / f"{cand.id}_16k.wav"
+        tmp_clip: Optional[Path] = None
+
+        try:
+            downloaded_ok = False
+            if _is_hls_pair(vf, af):
+                for attempt in range(3):
+                    if should_cancel and should_cancel():
+                        return False
+                    cur_vf, cur_af = vf, af
+                    if attempt == 1:
+                        cur_vf, cur_af, hdr_str, cur_info = _get_stream_params(force_refresh=True)
+                        vf, af = cur_vf, cur_af
+                    elif attempt == 2 and cur_vf:
+                        cur_vf, cur_af = _select_direct_stream_formats(
+                            cur_info,
+                            config,
+                            exclude_video_ids={str(cur_vf.get("format_id") or "")},
+                        )
+                    if not _is_hls_pair(cur_vf, cur_af):
+                        continue
+                    try:
+                        clip_path = _download_hls_via_ytdlp(
+                            cand=cand,
+                            pad_start=pad_start,
+                            pad_end=pad_start + pad_dur,
+                            vf=cur_vf,  # type: ignore[arg-type]
+                            af=cur_af,  # type: ignore[arg-type]
+                            cur_info=cur_info,
+                            dest_path=clips_dir / f"{cand.id}.mp4",
+                        )
+                        downloaded_ok = clip_path.exists() and clip_path.stat().st_size > 4096
+                        if downloaded_ok:
+                            break
+                    except Exception:  # noqa: BLE001
+                        continue
+            else:
+                for attempt in range(2):
+                    if should_cancel and should_cancel():
+                        return False
+                    if attempt == 1:
+                        vf, af, hdr_str, cur_info = _get_stream_params(force_refresh=True)
+                    if not vf or not af:
+                        break
+                    ext = ".mp4" if (vf.get("ext") == "mp4" and af.get("ext") == "m4a") else ".mkv"
+                    clip_path = clips_dir / f"{cand.id}{ext}"
+                    tmp_clip = clips_dir / f".{cand.id}.{uuid.uuid4().hex[:8]}.tmp{ext}"
+                    try:
+                        cmd = [
+                            "-headers", hdr_str, "-ss", f"{pad_start:.3f}", "-t", f"{pad_dur:.3f}", "-i", vf["url"],
+                            "-headers", hdr_str, "-ss", f"{pad_start:.3f}", "-t", f"{pad_dur:.3f}", "-i", af["url"],
+                            "-map", "0:v:0", "-map", "1:a:0",
+                            "-c", "copy",
+                            *(["-movflags", "+faststart"] if ext == ".mp4" else []),
+                            str(tmp_clip),
+                        ]
+                        run_ffmpeg(cmd, timeout=45)
+                        if tmp_clip.exists() and tmp_clip.stat().st_size > 4096:
+                            os.replace(tmp_clip, clip_path)
+                            downloaded_ok = True
+                            break
+                    except Exception:  # noqa: BLE001
+                        if tmp_clip is not None:
+                            tmp_clip.unlink(missing_ok=True)
+
+            if not downloaded_ok:
+                return False
+
+            clip_wav.unlink(missing_ok=True)
+            extract_wav_audio(clip_path, clip_wav)
+            with state_lock:
+                cand.clip_video_path = str(clip_path.resolve())
+                cand.clip_audio_path = str(clip_wav.resolve())
+                cand.clip_time_offset = round(pad_start, 3)
+                completed_count["n"] += 1
+                if on_progress:
+                    on_progress(
+                        f"[3/4] Downloaded clip {cand.id} ({completed_count['n']}/{total_pending}, "
+                        f"{clip_path.stat().st_size / 1e6:.1f} MB)..."
+                    )
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+        finally:
+            if tmp_clip is not None:
+                tmp_clip.unlink(missing_ok=True)
+
+    workers = max(1, min(6, int(getattr(config.ingest, "clip_download_workers", 4) or 4), total_pending))
+    if workers <= 1:
+        for cand in pending:
+            _download_one(cand)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = [pool.submit(_download_one, cand) for cand in pending]
+            for fut in as_completed(futs):
+                fut.result()
+
+    if should_cancel and should_cancel():
+        return metadata
+
+    all_ok = all(
+        c.clip_video_path
+        and Path(c.clip_video_path).is_file()
+        and Path(c.clip_video_path).stat().st_size > 4096
+        for c in candidates
+    )
+    if all_ok:
+        sample_clip = Path(candidates[0].clip_video_path)
+        try:
+            s_info = extract_stream_info(probe_media(sample_clip))
+            if s_info.get("width") and s_info.get("height"):
+                metadata.width = int(s_info["width"])
+                metadata.height = int(s_info["height"])
+                metadata.fps = float(s_info.get("fps") or metadata.fps or 30.0)
+                metadata.aspect_ratio = float(s_info.get("aspect_ratio") or metadata.aspect_ratio)
+                workspace.metadata_path.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+        return metadata
+
+    # Graceful fallback if any clip slice download failed (e.g. non-seekable live stream)
+    if on_progress:
+        on_progress("Clip-range stream unavailable; falling back to full video download...")
+    full_meta = ingest_source(
+        source=metadata.source,
+        workspace=workspace,
+        config=config,
+        show_override=metadata.show_name,
+        year_override=metadata.year,
+        force=True,
+        on_progress=on_progress,
+        allow_clip_only=False,
+    )
+    for cand in candidates:
+        cand.clip_video_path = ""
+        cand.clip_audio_path = ""
+        cand.clip_time_offset = 0.0
+    return full_meta
+
+
 def _ingest_local(source: str, workspace: ProjectWorkspace) -> VideoMetadata:
     src_path = Path(source).expanduser().resolve()
     if not src_path.is_file():
@@ -559,7 +1115,11 @@ def _ingest_local(source: str, workspace: ProjectWorkspace) -> VideoMetadata:
 
     cached_video = workspace.source_dir / f"source_video{src_path.suffix.lower() or '.mp4'}"
     if not cached_video.exists() or cached_video.stat().st_size != src_path.stat().st_size:
-        shutil.copy2(src_path, cached_video)
+        cached_video.unlink(missing_ok=True)
+        try:
+            os.link(src_path, cached_video)
+        except OSError:
+            shutil.copy2(src_path, cached_video)
 
     probe = probe_media(cached_video)
     tags = probe.get("format", {}).get("tags", {}) or {}

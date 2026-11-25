@@ -1,6 +1,6 @@
 ; Inno Setup script for Shortly Studio
 #define MyAppName "Shortly Studio"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "Shortly Studio"
 #define MyAppExeName "ShortlyStudio.exe"
 

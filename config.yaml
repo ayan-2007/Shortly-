@@ -11,6 +11,8 @@ ingest:
   max_video_height: 2160 # Downloads up to 4K/1440p/1080p HD so 9:16 portrait crops preserve crisp original resolution
   min_preferred_height: 1080
   prefer_h264: false
+  clip_only_download: true # Surgical clip-only YouTube downloads when captions exist (~20s instead of 20min on 3h podcasts)
+  clip_download_workers: 4 # Parallel clip-range download workers (1-6)
   concurrent_fragments: 6
   retries: 10
   cookies_from_browser: "" # Optional: "chrome" | "edge" | "firefox" for age-restricted videos
@@ -77,6 +79,7 @@ hook:
   deceased_subject: false # Enables extra respectful-tone guardrails for deceased figures
 
 reframe:
+  aspect_ratio: "9:16" # "9:16" (vertical Shorts) | "16:9" (widescreen landscape)
   output_width: 1080
   output_height: 1920
   output_fps: 30
@@ -112,7 +115,11 @@ overlays:
   attention_card_text: ""
   attention_card_position: "center" # "center" | "upper" | "lower"
   attention_card_duration_sec: 4.0 # 0.0 = full clip duration, >0 = first N seconds
-  attention_card_style: "white_box" # "white_box" | "white_pill" | "dark_neon"
+  attention_card_style: "white_box" # "white_box" | "white_pill" | "dark_neon" | "glass_dark" | "gold_luxury" | "red_alert"
+  attention_card_font_style: "bold_display" # "bold_display" | "impact" | "clean_sans" | "editorial_serif" | "mono_tech"
+  attention_card_text_color: "auto" # "auto" | "black" | "white" | "purple" | "gold" | "red" | "blue" | "green"
+  attention_card_font_size: "medium" # "small" | "medium" | "large" | "xl"
+  attention_card_text_case: "normal" # "normal" | "upper" | "title"
 
 audio:
   target_lufs: -14.0
@@ -139,6 +146,7 @@ export:
   sharpen_strength: 0.22
   mirror_video: false # Horizontally mirror video footage (before burning captions so text remains readable)
   video_filters: [] # Up to 2 quality filters: "cinematic_grade" | "sharp_hd" | "denoise_clean" | "warm_studio"
+  playback_speed: 1.0 # Playback speed multiplier (0.5 to 2.0)
   lossless_intermediates: true
   audio_bitrate: "256k"
   rights_note: "Verify licensing/fair-use permissions for original broadcast footage before publishing."

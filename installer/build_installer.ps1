@@ -57,5 +57,11 @@ if ($LASTEXITCODE -ne 0) {
 
 $OutExe = Join-Path $Root "release\Shortly-Setup.exe"
 $SizeMB = [math]::Round((Get-Item $OutExe).Length / 1MB, 1)
+
+Write-Host "[5/5] Refreshing release.zip bundle..." -ForegroundColor Cyan
+$OutZip = Join-Path $Root "release.zip"
+& $Py -c "import zipfile, pathlib; z = zipfile.ZipFile(r'$OutZip', 'w', compression=zipfile.ZIP_STORED); z.writestr('release/', ''); z.write(r'$OutExe', 'release/Shortly-Setup.exe'); z.close()"
+$ZipMB = [math]::Round((Get-Item $OutZip).Length / 1MB, 1)
+
 Write-Host ""
-Write-Host "SUCCESS! Installer ready: $OutExe ($SizeMB MB)" -ForegroundColor Green
+Write-Host "SUCCESS! Installer ready: $OutExe ($SizeMB MB) and $OutZip ($ZipMB MB)" -ForegroundColor Green

@@ -266,6 +266,7 @@ def build_native_reframe_filter(
     detector: FaceDetector | None = None,
     thumb_output_jpg: Path | None = None,
     peak_offset_sec: float = 0.0,
+    unmirrored_thumb_cache: Path | None = None,
 ) -> Tuple[str, float, float]:
     """Track speaker faces with OpenCV YuNet + active-speaker & scene-cut detection and return (ffmpeg_filter_str, out_fps, best_thumb_offset).
 
@@ -285,9 +286,11 @@ def build_native_reframe_filter(
     out_w = config.reframe.output_width
     out_h = config.reframe.output_height
     src_ar = src_w / max(1, src_h)
-    is_four_by_three = src_ar < 1.45
+    target_ar = out_w / max(1, out_h)
+    is_landscape = out_w > out_h
+    use_blurred_fit = (src_ar < (target_ar - 0.12)) if is_landscape else (src_ar < 1.45)
 
-    if is_four_by_three:
+    if use_blurred_fit:
         best_thumb_t = min(max(0.2, peak_offset_sec), max(0.2, slice_dur - 0.2))
         if thumb_output_jpg is not None:
             thumb_output_jpg.parent.mkdir(parents=True, exist_ok=True)
@@ -300,8 +303,8 @@ def build_native_reframe_filter(
                 (
                     f"[0:v]split[rfbg][rffg];"
                     f"[rfbg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},gblur=sigma=22:steps=2,eq=brightness=-0.18[rfb];"
-                    f"[rffg]scale={out_w}:-2:flags=bicubic[rff];"
-                    f"[rfb][rff]overlay=(W-w)/2:(H-h)/2{mirror_vf}[vth]"
+                    f"[rffg]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease:flags=bicubic[rff];"
+                    f"[rfb][rff]overlay=(W-w)/2:(H-h)/2,setsar=1{mirror_vf}[vth]"
                 ),
                 "-map", "[vth]",
                 "-q:v", "3",
@@ -310,12 +313,55 @@ def build_native_reframe_filter(
         reframe_graph = (
             f"split[rfbg][rffg];"
             f"[rfbg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},gblur=sigma=22:steps=2,eq=brightness=-0.18[rfb];"
-            f"[rffg]scale={out_w}:-2:flags=bicubic[rff];"
-            f"[rfb][rff]overlay=(W-w)/2:(H-h)/2"
+            f"[rffg]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease:flags=bicubic[rff];"
+            f"[rfb][rff]overlay=(W-w)/2:(H-h)/2,setsar=1"
         )
         return reframe_graph, out_fps_val, best_thumb_t
 
-    target_ar = out_w / out_h
+    if is_landscape and abs(src_ar - target_ar) <= 0.12:
+        # Native widescreen pass-through / fit for 16:9 output (preserves full horizontal framing)
+        best_thumb_t = min(max(0.2, peak_offset_sec), max(0.2, slice_dur - 0.2))
+        if thumb_output_jpg is not None:
+            thumb_output_jpg.parent.mkdir(parents=True, exist_ok=True)
+            mirror_vf = ",hflip" if getattr(config.export, "mirror_video", False) else ""
+            if abs(src_ar - target_ar) <= 0.02:
+                th_scale = f"scale={out_w}:{out_h}:flags=bicubic,setsar=1{mirror_vf}"
+            else:
+                th_scale = f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase:flags=bicubic,crop={out_w}:{out_h},setsar=1{mirror_vf}"
+            try:
+                run_ffmpeg([
+                    "-ss", f"{start_sec + best_thumb_t:.3f}",
+                    "-i", str(source_video),
+                    "-vframes", "1",
+                    "-vf", th_scale,
+                    "-q:v", "3",
+                    str(thumb_output_jpg),
+                ])
+                if unmirrored_thumb_cache is not None and thumb_output_jpg.exists():
+                    unmirrored_thumb_cache.parent.mkdir(parents=True, exist_ok=True)
+                    img_th = cv2.imread(str(thumb_output_jpg))
+                    if img_th is not None:
+                        base_th = cv2.flip(img_th, 1) if getattr(config.export, "mirror_video", False) else img_th
+                        cv2.imwrite(str(unmirrored_thumb_cache), base_th, [int(cv2.IMWRITE_JPEG_QUALITY), 94])
+            except Exception:  # noqa: BLE001
+                pass
+
+        vf_parts: List[str] = []
+        if config.reframe.enhance_old_footage:
+            vf_parts.append("hqdn3d=1.5:1.5:4:4")
+            scaler = "lanczos"
+        else:
+            scaler = "bicubic"
+        if abs(src_ar - target_ar) <= 0.02:
+            vf_parts.append(f"scale={out_w}:{out_h}:flags={scaler}")
+        else:
+            vf_parts.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase:flags={scaler}")
+            vf_parts.append(f"crop={out_w}:{out_h}")
+        if config.reframe.enhance_old_footage:
+            vf_parts.append("unsharp=5:5:0.45:5:5:0.0")
+        vf_parts.append("setsar=1")
+        return ",".join(vf_parts), out_fps_val, best_thumb_t
+
     crop_h = src_h - (src_h % 2)
     crop_w = min(src_w, int(round(crop_h * target_ar)))
     crop_w = max(2, crop_w - (crop_w % 2))
@@ -351,14 +397,23 @@ def build_native_reframe_filter(
         cap = cv2.VideoCapture(str(source_video))
         if cap.isOpened():
             small_h_g = max(2, int(round(160 * src_h / max(1, src_w))))
+            scale_480 = min(1.0, 480.0 / float(src_w))
+            w_480 = max(2, int(round(src_w * scale_480)))
+            h_480 = max(2, int(round(src_h * scale_480)))
+            inv_480 = 1.0 / scale_480
             for cur_t in sample_offsets:
                 cap.set(cv2.CAP_PROP_POS_MSEC, (start_sec + cur_t) * 1000.0)
                 ok, frame = cap.read()
                 if not ok or frame is None:
                     continue
 
+                frame_480 = (
+                    cv2.resize(frame, (w_480, h_480), interpolation=cv2.INTER_AREA)
+                    if scale_480 < 1.0
+                    else frame
+                )
                 small_g = cv2.cvtColor(
-                    cv2.resize(frame, (160, small_h_g), interpolation=cv2.INTER_AREA),
+                    cv2.resize(frame_480, (160, small_h_g), interpolation=cv2.INTER_AREA),
                     cv2.COLOR_BGR2GRAY,
                 )
                 is_scene_cut = False
@@ -367,7 +422,24 @@ def build_native_reframe_filter(
                     if luma_diff > 22.0:
                         is_scene_cut = True
 
-                detected = _detect_faces_fast(face_det, frame, max_w=480) if face_tracking_on else []
+                if face_tracking_on:
+                    raw_boxes = face_det.detect(frame_480)
+                    detected = (
+                        [
+                            FaceBox(
+                                x=int(round(b.x * inv_480)),
+                                y=int(round(b.y * inv_480)),
+                                w=max(1, int(round(b.w * inv_480))),
+                                h=max(1, int(round(b.h * inv_480))),
+                                confidence=b.confidence,
+                            )
+                            for b in raw_boxes
+                        ]
+                        if scale_480 < 1.0
+                        else raw_boxes
+                    )
+                else:
+                    detected = []
                 if detected:
                     primary = _pick_active_speaker_face(
                         detected=detected,
@@ -419,9 +491,11 @@ def build_native_reframe_filter(
     if thumb_output_jpg is not None:
         thumb_output_jpg.parent.mkdir(parents=True, exist_ok=True)
         if best_thumb_frame is not None:
-            if getattr(config.export, "mirror_video", False):
-                best_thumb_frame = cv2.flip(best_thumb_frame, 1)
-            cv2.imwrite(str(thumb_output_jpg), best_thumb_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+            if unmirrored_thumb_cache is not None:
+                unmirrored_thumb_cache.parent.mkdir(parents=True, exist_ok=True)
+                cv2.imwrite(str(unmirrored_thumb_cache), best_thumb_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 94])
+            out_thumb = cv2.flip(best_thumb_frame, 1) if getattr(config.export, "mirror_video", False) else best_thumb_frame
+            cv2.imwrite(str(thumb_output_jpg), out_thumb, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
         else:
             mirror_vf = ",hflip" if getattr(config.export, "mirror_video", False) else ""
             try:
@@ -444,6 +518,7 @@ def build_native_reframe_filter(
         vf_parts.append("unsharp=5:5:0.45:5:5:0.0")
     else:
         vf_parts.append(f"scale={out_w}:{out_h}:flags=bicubic")
+    vf_parts.append("setsar=1")
     return ",".join(vf_parts), out_fps_val, best_thumb_t
 
 

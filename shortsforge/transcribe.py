@@ -3,16 +3,36 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import wave
+from functools import lru_cache
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
 
 from shortsforge.config import AppConfig
 from shortsforge.models import Sentence, Transcript, WordTimestamp
 from shortsforge.state import ProjectWorkspace
+
+
+def _compute_segment_pitch_proxy_from_array(
+    samples_f32: np.ndarray,
+    sr: int,
+    start: float,
+    end: float,
+) -> float:
+    """Compute a lightweight spectral centroid proxy from an in-memory PCM array."""
+    s_frame = max(0, min(samples_f32.size - 1, int(start * sr)))
+    e_frame = max(s_frame + 1, min(samples_f32.size, int(end * sr)))
+    seg = samples_f32[s_frame : min(e_frame, s_frame + sr * 4)]
+    if seg.size < 256:
+        return 0.0
+    spectrum = np.abs(np.fft.rfft(seg))
+    freqs = np.fft.rfftfreq(seg.size, d=1.0 / sr)
+    denom = float(np.sum(spectrum)) + 1e-6
+    return float(np.sum(freqs * spectrum) / denom)
 
 
 def _compute_segment_pitch_proxy(wav_path: Path, start: float, end: float) -> float:
@@ -40,6 +60,8 @@ def group_words_into_sentences(
     words: List[WordTimestamp],
     wav_path: Path | None = None,
     speaker_pause_sec: float = 1.6,
+    audio_samples: np.ndarray | None = None,
+    sample_rate: int = 16000,
 ) -> List[Sentence]:
     """Segment word-level timestamps into sentences and attach heuristic speaker turn labels."""
     if not words:
@@ -50,14 +72,29 @@ def group_words_into_sentences(
     speaker_idx = 1
     prev_centroid = 0.0
     # Avoid repeated WAV seeks if there are thousands of sentences (e.g. 3-hour transcript)
-    use_pitch_proxy = wav_path is not None and len(words) <= 2500
+    use_pitch_proxy = (audio_samples is not None or wav_path is not None) and len(words) <= 2500
+    cached_pcm = audio_samples
+    cached_sr = sample_rate
+    if use_pitch_proxy and cached_pcm is None and wav_path is not None:
+        try:
+            with wave.open(str(wav_path), "rb") as wf:
+                cached_sr = wf.getframerate()
+                raw_all = wf.readframes(wf.getnframes())
+            cached_pcm = np.frombuffer(raw_all, dtype=np.int16).astype(np.float32)
+        except Exception:  # noqa: BLE001
+            cached_pcm = None
 
     def _flush(word_buf: List[WordTimestamp], current_speaker: int) -> Tuple[Sentence, float]:
         text = " ".join(w.word.strip() for w in word_buf if w.word.strip()).strip()
         text = re.sub(r"\s+([.,!?;:])", r"\1", text)
         s_start = word_buf[0].start
         s_end = word_buf[-1].end
-        centroid = _compute_segment_pitch_proxy(wav_path, s_start, s_end) if use_pitch_proxy else 0.0
+        if use_pitch_proxy and cached_pcm is not None:
+            centroid = _compute_segment_pitch_proxy_from_array(cached_pcm, cached_sr, s_start, s_end)
+        elif use_pitch_proxy and wav_path is not None:
+            centroid = _compute_segment_pitch_proxy(wav_path, s_start, s_end)
+        else:
+            centroid = 0.0
         sent = Sentence(
             index=len(sentences),
             text=text,
@@ -168,6 +205,23 @@ def parse_yt_json3_captions(json3_path: Path, speaker_pause_sec: float = 1.6) ->
         return None
 
 
+@lru_cache(maxsize=2)
+def _get_cached_whisper_model(
+    model_size: str,
+    device: str,
+    compute_type: str,
+    cpu_threads: int,
+) -> Any:
+    from faster_whisper import WhisperModel
+
+    return WhisperModel(
+        model_size,
+        device=device,
+        compute_type=compute_type,
+        cpu_threads=cpu_threads,
+    )
+
+
 def transcribe_audio(
     audio_path: Path,
     workspace: ProjectWorkspace,
@@ -189,13 +243,16 @@ def transcribe_audio(
             workspace.transcript_path.write_text(parsed.model_dump_json(indent=2), encoding="utf-8")
             return parsed
 
-    # 2. Acoustic path: faster-whisper on the 16kHz PCM WAV
-    from faster_whisper import WhisperModel
-
+    # 2. Acoustic path: faster-whisper on the 16kHz PCM WAV (with CUDA auto-detect + cached multi-core model)
     device = config.transcription.device
     compute_type = config.transcription.compute_type
     if device == "auto":
-        device = "cpu"
+        try:
+            import ctranslate2
+
+            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+        except Exception:  # noqa: BLE001
+            device = "cpu"
     if compute_type == "auto":
         compute_type = "int8" if device == "cpu" else "float16"
 
@@ -208,8 +265,19 @@ def transcribe_audio(
 
     # For long videos (>15 min) on CPU without YouTube captions, use fast 'tiny' model on highlight windows
     model_size = "tiny" if (device == "cpu" and total_dur > 900.0) else config.transcription.model_size
-    model = WhisperModel(model_size, device=device, compute_type=compute_type)
+    cpu_threads = max(4, os.cpu_count() or 4) if device == "cpu" else 0
+    try:
+        model = _get_cached_whisper_model(model_size, device, compute_type, cpu_threads)
+    except Exception:  # noqa: BLE001
+        if device != "cpu":
+            device = "cpu"
+            compute_type = "int8"
+            cpu_threads = max(4, os.cpu_count() or 4)
+            model = _get_cached_whisper_model(model_size, device, compute_type, cpu_threads)
+        else:
+            raise
 
+    beam_sz = 1 if device == "cpu" else 2
     all_words: List[WordTimestamp] = []
 
     if device == "cpu" and total_dur > 1200.0:
@@ -228,6 +296,7 @@ def transcribe_audio(
             segs, _ = model.transcribe(
                 audio_np[s_sample:e_sample],
                 language=config.transcription.language,
+                beam_size=beam_sz,
                 word_timestamps=True,
                 vad_filter=config.transcription.vad_filter,
             )
@@ -244,6 +313,7 @@ def transcribe_audio(
         segments, info = model.transcribe(
             audio_np,
             language=config.transcription.language,
+            beam_size=beam_sz,
             word_timestamps=True,
             vad_filter=config.transcription.vad_filter,
         )
@@ -287,6 +357,8 @@ def transcribe_audio(
         all_words,
         wav_path=audio_path,
         speaker_pause_sec=config.transcription.speaker_turn_pause_sec,
+        audio_samples=audio_np * 32768.0,
+        sample_rate=sr,
     )
     transcript = Transcript(
         language=language,

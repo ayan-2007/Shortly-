@@ -21,7 +21,9 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import yaml
 
-from shortsforge.config import AppConfig, get_env_key, load_config
+from shortsforge.config import AppConfig, apply_aspect_ratio, get_env_key, load_config
+from shortsforge.ffmpeg_utils import extract_stream_info, probe_media
+from shortsforge.ingest import _extract_url_info_cached, is_url
 from shortsforge.models import (
     ClipCandidate,
     ClipExportMetadata,
@@ -171,8 +173,34 @@ def _apply_runtime_overrides(cfg: AppConfig, body: Dict[str, Any]) -> None:
             cfg.overlays.attention_card_duration_sec = max(0.0, float(body["attention_card_duration"]))
         except (TypeError, ValueError):
             pass
-    if body.get("attention_card_style") in ("white_box", "white_pill", "dark_neon"):
+    if body.get("attention_card_style") in ("white_box", "white_pill", "dark_neon", "glass_dark", "gold_luxury", "red_alert"):
         cfg.overlays.attention_card_style = body["attention_card_style"]
+    if body.get("attention_card_font_style") in ("bold_display", "impact", "clean_sans", "editorial_serif", "mono_tech"):
+        cfg.overlays.attention_card_font_style = body["attention_card_font_style"]
+    if body.get("attention_card_text_color") in ("auto", "black", "white", "purple", "gold", "red", "blue", "green"):
+        cfg.overlays.attention_card_text_color = body["attention_card_text_color"]
+    if body.get("attention_card_font_size") in ("small", "medium", "large", "xl"):
+        cfg.overlays.attention_card_font_size = body["attention_card_font_size"]
+    if body.get("attention_card_text_case") in ("normal", "upper", "title"):
+        cfg.overlays.attention_card_text_case = body["attention_card_text_case"]
+    if body.get("aspect_ratio") in ("9:16", "16:9"):
+        apply_aspect_ratio(cfg, body["aspect_ratio"])
+    if body.get("playback_speed") is not None:
+        try:
+            cfg.export.playback_speed = max(0.5, min(2.0, float(body["playback_speed"])))
+        except (TypeError, ValueError):
+            pass
+    if body.get("min_duration_sec") is not None:
+        try:
+            cfg.moments.min_duration_sec = max(5.0, min(600.0, float(body["min_duration_sec"])))
+        except (TypeError, ValueError):
+            pass
+    if body.get("max_duration_sec") is not None:
+        try:
+            mx = max(10.0, min(900.0, float(body["max_duration_sec"])))
+            cfg.moments.max_duration_sec = max(mx, cfg.moments.min_duration_sec + 5.0)
+        except (TypeError, ValueError):
+            pass
 
 
 def _safe_resolve_under(base_dir: Path, rel_path: str) -> Optional[Path]:
@@ -236,6 +264,8 @@ def _list_projects(config: AppConfig) -> List[Dict[str, Any]]:
             "candidate_count": cand_count,
             "approved_count": approved_count,
             "rendered_count": len(rendered_mp4s),
+            "mode": state.mode,
+            "aspect_ratio": state.aspect_ratio,
             "completed_steps": state.completed_steps,
             "warnings_count": len(state.warnings),
         })
@@ -635,6 +665,39 @@ def create_gui_server(
                 self._send_json(400, {"error": f"Invalid JSON: {exc}"})
                 return
 
+            # Probe URL or local video metadata for instant part-count calculator
+            if path == "/api/probe-source":
+                source = str(body.get("source") or "").strip()
+                if not source:
+                    self._send_json(400, {"error": "Source URL or file path is required."})
+                    return
+                cfg = self._cfg()
+                try:
+                    if is_url(source):
+                        info = _extract_url_info_cached(source, cfg)
+                        self._send_json(200, {
+                            "title": str(info.get("title") or ""),
+                            "duration": float(info.get("duration") or 0.0),
+                            "width": int(info.get("width") or 1920),
+                            "height": int(info.get("height") or 1080),
+                        })
+                        return
+                    src_p = Path(source).expanduser()
+                    if not src_p.is_file():
+                        self._send_json(400, {"error": f"File not found: {source}"})
+                        return
+                    sinfo = extract_stream_info(probe_media(src_p))
+                    self._send_json(200, {
+                        "title": src_p.stem,
+                        "duration": float(sinfo.get("duration") or 0.0),
+                        "width": int(sinfo.get("width") or 1920),
+                        "height": int(sinfo.get("height") or 1080),
+                    })
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    self._send_json(400, {"error": str(exc)})
+                    return
+
             # 1-Click Autopilot from just a URL or file path!
             if path == "/api/jobs/autopilot":
                 source = str(body.get("source") or "").strip()
@@ -644,8 +707,21 @@ def create_gui_server(
 
                 cfg = self._cfg()
                 _apply_runtime_overrides(cfg, body)
+                mode = "batch" if str(body.get("mode") or "viral").strip().lower() == "batch" else "viral"
+                try:
+                    part_duration_sec = max(0.0, float(body.get("part_duration_sec") or 0.0))
+                except (TypeError, ValueError):
+                    part_duration_sec = 0.0
+                aspect_ratio = body.get("aspect_ratio") if body.get("aspect_ratio") in ("9:16", "16:9") else None
                 raw_max = body.get("max_clips")
-                max_clips = 12 if (raw_max is None or int(raw_max) <= 0) else max(1, min(15, int(raw_max)))
+                try:
+                    raw_max_i = int(raw_max) if raw_max is not None else (0 if mode == "batch" else 12)
+                except (TypeError, ValueError):
+                    raw_max_i = 0 if mode == "batch" else 12
+                if mode == "batch":
+                    max_clips = 0 if raw_max_i <= 0 else max(1, min(50, raw_max_i))
+                else:
+                    max_clips = 12 if raw_max_i <= 0 else max(1, min(15, raw_max_i))
                 force = bool(body.get("force", False))
 
                 def _run_auto(rec: JobRecord) -> None:
@@ -664,9 +740,14 @@ def create_gui_server(
                         on_progress=_prog,
                         should_cancel=rec.cancel_event.is_set,
                         on_project_detected=_on_proj,
+                        mode=mode,
+                        part_duration_sec=part_duration_sec,
+                        aspect_ratio=aspect_ratio,
+                        playback_speed=cfg.export.playback_speed,
                     )
                     rec.project_name = proj_name
-                    rec.logs.append(f"Done! Rendered {len(exported)} viral Short(s) in outputs/{proj_name}/")
+                    lbl = "batch part(s)" if mode == "batch" else "viral Short(s)"
+                    rec.logs.append(f"Done! Rendered {len(exported)} {lbl} in outputs/{proj_name}/")
 
                 rec = jobs.start_job("autopilot", "auto", _run_auto)
                 self._send_json(202, rec.to_dict())
@@ -715,17 +796,21 @@ def create_gui_server(
                     return
 
                 cfg = self._cfg()
-                if body.get("caption_preset") in ("iman", "hormozi", "documentary", "neon", "comic", "minimal"):
-                    cfg.captions.preset = body["caption_preset"]
-                if body.get("active_color") in ("purple", "yellow", "red"):
-                    cfg.captions.active_color = body["active_color"]
-                if body.get("hook_style") in ("cold_open", "freeze_narrator"):
-                    cfg.hook.style = body["hook_style"]
+                _apply_runtime_overrides(cfg, body)
 
                 name = str(body.get("name") or "").strip() or "project"
                 person = str(body.get("person") or "").strip() or "Speaker"
-                raw_max = int(body["max_clips"]) if body.get("max_clips") is not None else cfg.moments.max_candidates
-                max_clips = 15 if raw_max <= 0 else max(1, min(15, raw_max))
+                mode = "batch" if str(body.get("mode") or "viral").strip().lower() == "batch" else "viral"
+                try:
+                    part_duration_sec = max(0.0, float(body.get("part_duration_sec") or 0.0))
+                except (TypeError, ValueError):
+                    part_duration_sec = 0.0
+                aspect_ratio = body.get("aspect_ratio") if body.get("aspect_ratio") in ("9:16", "16:9") else None
+                raw_max = int(body["max_clips"]) if body.get("max_clips") is not None else (0 if mode == "batch" else cfg.moments.max_candidates)
+                if mode == "batch":
+                    max_clips = 0 if raw_max <= 0 else max(1, min(50, raw_max))
+                else:
+                    max_clips = 15 if raw_max <= 0 else max(1, min(15, raw_max))
                 min_score = int(body.get("min_score") or cfg.review.auto_score_threshold)
                 auto = bool(body.get("auto", True))
                 deceased = bool(body.get("deceased", False))
@@ -752,6 +837,10 @@ def create_gui_server(
                         deceased=deceased,
                         force=force,
                         on_progress=_prog,
+                        mode=mode,
+                        part_duration_sec=part_duration_sec,
+                        aspect_ratio=aspect_ratio,
+                        playback_speed=cfg.export.playback_speed,
                     )
 
                 rec = jobs.start_job("new", name, _run_new)
@@ -770,6 +859,8 @@ def create_gui_server(
                 auto = bool(body.get("auto", False))
                 force = bool(body.get("force", False))
                 min_score = body.get("min_score")
+                aspect_ratio = body.get("aspect_ratio") if body.get("aspect_ratio") in ("9:16", "16:9") else None
+                playback_speed = cfg.export.playback_speed if body.get("playback_speed") is not None else None
 
                 def _run_render(rec: JobRecord) -> None:
                     def _prog(msg: str) -> None:
@@ -784,8 +875,10 @@ def create_gui_server(
                         force=force,
                         on_progress=_prog,
                         should_cancel=rec.cancel_event.is_set,
+                        aspect_ratio=aspect_ratio,
+                        playback_speed=playback_speed,
                     )
-                    rec.logs.append(f"Exported {len(exported)} Short(s) to outputs/{name}/")
+                    rec.logs.append(f"Exported {len(exported)} video(s) to outputs/{name}/")
 
                 rec = jobs.start_job("render", name, _run_render)
                 self._send_json(202, rec.to_dict())
@@ -800,6 +893,7 @@ def create_gui_server(
 
                 cfg = self._cfg()
                 _apply_runtime_overrides(cfg, body)
+                aspect_ratio = body.get("aspect_ratio") if body.get("aspect_ratio") in ("9:16", "16:9") else None
 
                 def _run_edit(rec: JobRecord) -> None:
                     def _prog(msg: str) -> None:
@@ -811,6 +905,7 @@ def create_gui_server(
                         clip_id=clip_id,
                         config=cfg,
                         on_progress=_prog,
+                        aspect_ratio=aspect_ratio,
                     )
                     rec.logs.append(f"Baked runtime edits into {updated.output_video}")
 
@@ -860,6 +955,17 @@ def create_gui_server(
     return ThreadingHTTPServer((host, port), StudioHandler)
 
 
+def _open_browser_url(url: str) -> None:
+    """Reliably open URL in the user's default browser on Windows/macOS/Linux (including pythonw)."""
+    if platform.system().lower() == "windows" and hasattr(os, "startfile"):
+        try:
+            os.startfile(url)  # type: ignore[attr-defined]
+            return
+        except Exception:  # noqa: BLE001
+            pass
+    webbrowser.open(url)
+
+
 def launch_gui(
     config_path: Optional[Path | str] = None,
     host: str = "127.0.0.1",
@@ -876,7 +982,7 @@ def launch_gui(
             if resp.status == 200:
                 print(f"Shortly Studio is already running at {url}")
                 if open_browser:
-                    webbrowser.open(url)
+                    _open_browser_url(url)
                 return
     except Exception:  # noqa: BLE001
         pass
@@ -884,7 +990,7 @@ def launch_gui(
     server = create_gui_server(config_path=config_path, host=host, port=port)
     print(f"Shortly Studio GUI running at {url}  (press Ctrl+C to stop)")
     if open_browser:
-        threading.Timer(0.45, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.45, lambda: _open_browser_url(url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

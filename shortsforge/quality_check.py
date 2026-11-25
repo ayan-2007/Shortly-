@@ -72,7 +72,13 @@ class FaceDetector:
             except Exception:  # noqa: BLE001
                 self._yunet = None
 
-        # 2. Secondary fallback: Frontal + Profile Haar cascades (100% offline & catches synthetic/extreme-profile frames)
+        # 2. Secondary fallback: lazy-loaded Frontal + Profile Haar cascades (loaded only if needed)
+        self._haar_loaded = False
+
+    def _ensure_haar(self) -> None:
+        if self._haar_loaded:
+            return
+        self._haar_loaded = True
         if _HAAR_FRONTAL_PATH.exists():
             self._haar = cv2.CascadeClassifier(str(_HAAR_FRONTAL_PATH))
         if _HAAR_ALT2_PATH.exists():
@@ -117,14 +123,17 @@ class FaceDetector:
                 pass
 
         if not boxes:
+            self._ensure_haar()
             gray = cv2.cvtColor(work_frame, cv2.COLOR_BGR2GRAY)
-            min_dim = max(22, int(min(wh, ww) * 0.075))
-            for cascade in (self._haar_alt2, self._haar):
+            min_dim = max(24, int(min(wh, ww) * 0.08))
+            scale_factor = 1.24 if self._yunet is not None else 1.16
+            cascades = (self._haar_alt2,) if self._yunet is not None else (self._haar_alt2, self._haar)
+            for cascade in cascades:
                 if cascade is None:
                     continue
                 rects = cascade.detectMultiScale(
                     gray,
-                    scaleFactor=1.15,
+                    scaleFactor=scale_factor,
                     minNeighbors=4,
                     minSize=(min_dim, min_dim),
                 )
@@ -138,13 +147,13 @@ class FaceDetector:
                             boxes.append(FaceBox(x=bx, y=by, w=bw, h=bh, confidence=0.78))
                     break
 
-            # Side-profile fallback (checks both left-facing and right-facing podcast camera angles)
-            if not boxes and self._haar_profile is not None:
+            # Side-profile fallback when primary detector is unavailable or extreme profile shot
+            if not boxes and self._haar_profile is not None and self._yunet is None:
                 for flipped in (False, True):
                     img_g = cv2.flip(gray, 1) if flipped else gray
                     rects = self._haar_profile.detectMultiScale(
                         img_g,
-                        scaleFactor=1.16,
+                        scaleFactor=1.20,
                         minNeighbors=4,
                         minSize=(min_dim, min_dim),
                     )
@@ -173,19 +182,22 @@ class FaceDetector:
 
 def is_mostly_graphic_frame(frame_bgr: np.ndarray) -> bool:
     """Heuristic check detecting static slides/charts/text-only graphic frames."""
-    small = cv2.resize(frame_bgr, (320, 180))
+    small = cv2.resize(frame_bgr, (320, 180), interpolation=cv2.INTER_AREA)
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
     gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
     gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-    grad_mag = np.sqrt(gx * gx + gy * gy)
-    flat_ratio = float(np.mean(grad_mag < 6.0))
+    grad_mag_sq = gx * gx + gy * gy
+    flat_ratio = float(np.mean(grad_mag_sq < 36.0))
+    if flat_ratio <= 0.86:
+        return False
 
-    quant = (small // 16).reshape(-1, 3)
-    _, counts = np.unique(quant, axis=0, return_counts=True)
-    top3_share = float(np.sort(counts)[-3:].sum()) / max(1, quant.shape[0])
+    quant = (small.astype(np.uint16) >> 4).reshape(-1, 3)
+    packed = (quant[:, 0] << 8) | (quant[:, 1] << 4) | quant[:, 2]
+    counts = np.bincount(packed, minlength=4096)
+    top3_share = float(np.partition(counts, -3)[-3:].sum()) / max(1, packed.shape[0])
 
-    return flat_ratio > 0.86 and top3_share > 0.78
+    return top3_share > 0.78
 
 
 def analyze_audio_segment(wav_path: Path, start: float, end: float) -> Tuple[float, float, float]:
@@ -230,6 +242,7 @@ def evaluate_candidate_quality(
     detector: Optional[FaceDetector] = None,
     thumb_output_path: Optional[Path] = None,
     video_cap: Optional[cv2.VideoCapture] = None,
+    time_offset: float = 0.0,
 ) -> QualityReport:
     """Inspect sampled video frames & audio slice; also extract best preview thumbnail."""
     own_detector = detector is None
@@ -240,15 +253,20 @@ def evaluate_candidate_quality(
     best_thumb_score = -1.0
     best_thumb_frame: Optional[np.ndarray] = None
 
+    local_start = max(0.0, candidate.start - time_offset)
+    local_end = max(local_start + 0.5, candidate.end - time_offset)
+    local_peak_start = max(local_start, candidate.peak_start - time_offset)
+    local_peak_end = max(local_peak_start + 0.1, candidate.peak_end - time_offset)
+
     own_cap = video_cap is None
     cap = video_cap if video_cap is not None else cv2.VideoCapture(str(video_path))
     try:
         if cap.isOpened():
-            clip_dur = max(1.0, candidate.end - candidate.start)
+            clip_dur = max(1.0, local_end - local_start)
             sample_step_sec = max(1.0 / max(0.2, config.quality_check.sample_fps), clip_dur / 4.0)
 
-            t = candidate.start + 0.1
-            while t <= candidate.end:
+            t = local_start + 0.1
+            while t <= local_end:
                 cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
                 ok, frame = cap.read()
                 if not ok or frame is None:
@@ -272,7 +290,7 @@ def evaluate_candidate_quality(
                 gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
                 sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
                 face_bonus = sum(f.area for f in faces) / max(1.0, fh * fw) * 1200.0
-                peak_bonus = 120.0 if (candidate.peak_start <= t <= candidate.peak_end) else 0.0
+                peak_bonus = 120.0 if (local_peak_start <= t <= local_peak_end) else 0.0
                 thumb_score = sharpness + face_bonus + peak_bonus
                 if thumb_score > best_thumb_score:
                     best_thumb_score = thumb_score
@@ -288,7 +306,7 @@ def evaluate_candidate_quality(
         cv2.imwrite(str(thumb_output_path), best_thumb_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
     elif total_frames == 0 and thumb_output_path is not None:
         thumb_output_path.parent.mkdir(parents=True, exist_ok=True)
-        mid_t = (candidate.peak_start + candidate.peak_end) * 0.5
+        mid_t = (local_peak_start + local_peak_end) * 0.5
         try:
             run_ffmpeg([
                 "-ss", f"{mid_t:.3f}",
@@ -312,7 +330,7 @@ def evaluate_candidate_quality(
 
     face_ratio = (face_frames / total_frames) if total_frames > 0 else 0.0
     graphics_ratio = (graphic_frames / total_frames) if total_frames > 0 else 0.0
-    rms_db, clipping_ratio, snr_db = analyze_audio_segment(audio_wav_path, candidate.start, candidate.end)
+    rms_db, clipping_ratio, snr_db = analyze_audio_segment(audio_wav_path, local_start, local_end)
 
     rejection_reasons: List[str] = []
     warnings: List[str] = []

@@ -843,7 +843,7 @@
     letter-spacing: 0.06em;
     color: var(--muted);
   }
-  .opt-field select {
+  .opt-field select, .opt-field input[type="number"] {
     padding: 8px 11px;
     border-radius: 10px;
     border: 1px solid rgba(251, 243, 231, 0.15);
@@ -854,8 +854,94 @@
     outline: none;
     transition: border-color 0.15s;
   }
-  .opt-field select:focus {
+  .opt-field select:focus, .opt-field input[type="number"]:focus {
     border-color: var(--sky);
+  }
+
+  /* Mode & Aspect Ratio Switcher Strip */
+  .mode-ratio-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .seg-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 999px;
+    background: rgba(8, 14, 25, 0.84);
+    border: 1px solid rgba(251, 243, 231, 0.14);
+  }
+  .seg-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 15px;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-soft);
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .seg-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
+  .seg-btn.active {
+    background: linear-gradient(135deg, var(--sky), #1778D0);
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(34, 155, 240, 0.35);
+  }
+  .seg-btn.active.is-batch {
+    background: linear-gradient(135deg, #F26A3E, #C84BFF);
+    box-shadow: 0 4px 14px rgba(242, 106, 62, 0.34);
+  }
+  .ratio-icon {
+    display: inline-block;
+    border: 1.8px solid currentColor;
+    border-radius: 2px;
+  }
+  .ratio-icon.r916 { width: 9px; height: 14px; }
+  .ratio-icon.r169 { width: 15px; height: 10px; }
+
+  .mode-config-box {
+    background: rgba(10, 17, 30, 0.62);
+    border: 1px solid rgba(251, 243, 231, 0.11);
+    border-radius: 14px;
+    padding: 13px 15px;
+    margin-bottom: 13px;
+  }
+  .mode-config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+    gap: 10px;
+    align-items: end;
+  }
+  .inline-dual {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .inline-dual input {
+    width: 100%;
+    min-width: 0;
+  }
+  .batch-calc-hint {
+    margin-top: 10px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: rgba(34, 155, 240, 0.11);
+    border: 1px solid rgba(34, 155, 240, 0.28);
+    color: #D8EEFF;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
   }
 
   .quick-toggles {
@@ -1141,7 +1227,7 @@
   }
   .card-actions button { flex: 1; }
 
-  /* === Outputs Player Cards & Live Runtime Video Editor === */
+  /* === Outputs Player Cards & Editing Window Modal === */
   .output-card {
     background: var(--glass-panel-strong);
     backdrop-filter: blur(22px);
@@ -1154,6 +1240,9 @@
     gap: 24px;
     box-shadow: 0 18px 46px rgba(6, 12, 24, 0.42);
   }
+  .output-card.is-16-9 {
+    grid-template-columns: 460px 1fr;
+  }
   .video-shell {
     position: relative;
     background: #060910;
@@ -1162,6 +1251,149 @@
     border: 1px solid rgba(251, 243, 231, 0.16);
     aspect-ratio: 9 / 16;
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  }
+  .video-shell.ratio-16-9 {
+    aspect-ratio: 16 / 9;
+  }
+  .card-bottom-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .card-bottom-actions .btn-dl {
+    margin-top: 0;
+  }
+  .btn-open-editor {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, rgba(200, 75, 255, 0.24), rgba(242, 106, 62, 0.22));
+    color: #F5E8FF;
+    border: 1px solid rgba(200, 75, 255, 0.52);
+    font-size: 12.5px;
+    font-weight: 700;
+  }
+  .btn-open-editor:hover {
+    background: linear-gradient(135deg, rgba(200, 75, 255, 0.40), rgba(242, 106, 62, 0.36));
+    border-color: #D876FF;
+    box-shadow: 0 6px 18px rgba(200, 75, 255, 0.25);
+  }
+
+  .outputs-summary-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  details.batch-rerender-details {
+    margin-bottom: 18px;
+  }
+  details.batch-rerender-details > summary {
+    list-style: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 15px;
+    border-radius: 999px;
+    background: rgba(20, 31, 52, 0.78);
+    border: 1px solid rgba(200, 75, 255, 0.34);
+    color: #E9D5FF;
+    font-size: 12.5px;
+    font-weight: 700;
+    user-select: none;
+  }
+  details.batch-rerender-details > summary::-webkit-details-marker { display: none; }
+  details.batch-rerender-details[open] > summary { margin-bottom: 12px; }
+
+  /* Popup Editing Window Modal */
+  .editor-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(6, 11, 20, 0.76);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .editor-modal-backdrop.open { display: flex; }
+  .editor-modal {
+    width: 100%;
+    max-width: 1060px;
+    max-height: 92vh;
+    background: linear-gradient(155deg, rgba(16, 26, 44, 0.97), rgba(22, 18, 39, 0.97));
+    border: 1px solid rgba(200, 75, 255, 0.45);
+    border-radius: 22px;
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.72);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .editor-modal-head {
+    padding: 15px 22px;
+    border-bottom: 1px solid rgba(251, 243, 231, 0.11);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .editor-modal-close {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--cream);
+    font-size: 19px;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+  }
+  .editor-modal-close:hover { background: rgba(244, 63, 94, 0.30); color: #fff; }
+  .editor-modal-body {
+    padding: 20px 22px;
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: 310px 1fr;
+    gap: 22px;
+    align-items: start;
+  }
+  .editor-modal-body.is-16-9 {
+    grid-template-columns: 440px 1fr;
+  }
+  .editor-modal-foot {
+    padding: 14px 22px;
+    border-top: 1px solid rgba(251, 243, 231, 0.11);
+    background: rgba(9, 15, 26, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .speed-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 7px;
+  }
+  .speed-slider-row input[type="range"] {
+    flex: 1;
+    accent-color: #C84BFF;
+    cursor: pointer;
+  }
+  @media (max-width: 960px) {
+    .output-card.is-16-9 { grid-template-columns: 1fr; }
+    .editor-modal-body, .editor-modal-body.is-16-9 { grid-template-columns: 1fr; }
   }
   .video-shell video {
     width: 100%;
@@ -1248,6 +1480,43 @@
     box-shadow: 0 0 18px rgba(192, 75, 255, 0.4), 0 10px 24px rgba(0, 0, 0, 0.6);
   }
   .live-attn-box.style-dark_neon .attn-bar { background: #D876FF; }
+  .live-attn-box.style-glass_dark {
+    background: rgba(15, 23, 42, 0.84);
+    backdrop-filter: blur(12px);
+    color: #F8FAFC;
+    border: 1.5px solid rgba(226, 232, 240, 0.55);
+  }
+  .live-attn-box.style-glass_dark .attn-bar { display: none; }
+  .live-attn-box.style-gold_luxury {
+    background: rgba(18, 15, 11, 0.96);
+    color: #FFFDF7;
+    border: 2px solid #F5C451;
+    box-shadow: 0 0 18px rgba(245, 196, 81, 0.28), 0 10px 24px rgba(0, 0, 0, 0.65);
+  }
+  .live-attn-box.style-gold_luxury .attn-bar { background: #FACC55; }
+  .live-attn-box.style-red_alert {
+    background: rgba(30, 10, 15, 0.96);
+    color: #FFFFFF;
+    border: 2px solid #F43F5E;
+    box-shadow: 0 0 18px rgba(244, 63, 94, 0.35), 0 10px 24px rgba(0, 0, 0, 0.65);
+  }
+  .live-attn-box.style-red_alert .attn-bar { background: #FF738A; }
+  .start-box-panel {
+    margin-top: 12px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(10, 17, 30, 0.62);
+    border: 1px solid rgba(200, 75, 255, 0.28);
+  }
+  .start-box-preview {
+    margin-top: 10px;
+    padding: 12px;
+    border-radius: 12px;
+    background: radial-gradient(circle at center, rgba(30, 44, 70, 0.72), rgba(9, 14, 24, 0.92));
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
 
   /* Live On-Video Caption Position Guide */
   .live-cap-guide {
@@ -1498,6 +1767,181 @@
     </div>
   </div>
   <div class="content" id="content"></div>
+</div>
+
+<div class="editor-modal-backdrop" id="editor-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="editor-modal-title">
+  <div class="editor-modal">
+    <div class="editor-modal-head">
+      <div>
+        <div class="clip-editor-title" id="editor-modal-title">
+          <span class="neon-dot"></span>
+          Editing Window &mdash; Filters, Playback Speed, Captions &amp; White Center Box
+        </div>
+        <div id="editor-modal-sub" style="font-size:12px; color:var(--muted); margin-top:3px;"></div>
+      </div>
+      <button class="editor-modal-close" id="editor-modal-close" type="button" title="Close Editing Window">&times;</button>
+    </div>
+    <div class="editor-modal-body" id="editor-modal-body">
+      <div>
+        <div class="video-shell" id="m-shell">
+          <div class="live-preview-badge" id="m-live-badge">
+            <span class="neon-dot" style="width:7px;height:7px;"></span>
+            <span>Live Preview &mdash; Click Apply &amp; Save</span>
+          </div>
+          <div class="live-attn-overlay pos-center" id="m-live-attn">
+            <div class="live-attn-box style-white_box" id="m-live-attn-box">
+              <div class="attn-bar"></div>
+              <div id="m-live-attn-txt"></div>
+            </div>
+          </div>
+          <div class="live-cap-guide pos-bottom" id="m-live-cap-guide">
+            <div class="live-cap-pill" id="m-live-cap-pill">Captions: BOTTOM</div>
+          </div>
+          <video id="m-vid" controls preload="metadata"></video>
+        </div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div class="mode-config-box" style="margin-bottom:0;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:7px;">
+            <span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted);">1. Playback Speed (Audio &amp; Captions Synced)</span>
+            <span class="badge coral" id="m-speed-badge">1.00x</span>
+          </div>
+          <div class="speed-slider-row">
+            <span style="font-size:11px; color:var(--muted);">0.5x</span>
+            <input type="range" id="m-speed-range" min="0.50" max="2.00" step="0.05" value="1.00" />
+            <span style="font-size:11px; color:var(--muted);">2.0x</span>
+          </div>
+          <div class="filter-pills-row" id="m-speed-pills" style="margin-bottom:0;">
+            <button type="button" class="filter-pill-btn" data-spd="0.75">0.75x</button>
+            <button type="button" class="filter-pill-btn" data-spd="1.0">1.0x Normal</button>
+            <button type="button" class="filter-pill-btn" data-spd="1.15">1.15x</button>
+            <button type="button" class="filter-pill-btn" data-spd="1.25">1.25x</button>
+            <button type="button" class="filter-pill-btn" data-spd="1.5">1.5x</button>
+            <button type="button" class="filter-pill-btn" data-spd="1.75">1.75x</button>
+            <button type="button" class="filter-pill-btn" data-spd="2.0">2.0x</button>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); margin-bottom:6px;">
+            2. Live Visual Filters (Click to Preview Immediately)
+          </div>
+          <div class="filter-pills-row" id="m-pills">
+            <button type="button" class="filter-pill-btn" data-fpill="">Original (No Filter)</button>
+            <button type="button" class="filter-pill-btn" data-fpill="cinematic_grade">Cinematic Grade</button>
+            <button type="button" class="filter-pill-btn" data-fpill="sharp_hd">Crisp Sharp HD</button>
+            <button type="button" class="filter-pill-btn" data-fpill="warm_studio">Warm Studio</button>
+            <button type="button" class="filter-pill-btn" data-fpill="vibrant_pop">Vibrant Pop</button>
+            <button type="button" class="filter-pill-btn" data-fpill="denoise_clean">Studio Denoise</button>
+            <button type="button" class="filter-pill-btn" data-fpill="cool_documentary">Cool Documentary</button>
+            <button type="button" class="filter-pill-btn" data-fpill="bw_noir">B&amp;W Noir</button>
+          </div>
+        </div>
+
+        <div class="editor-controls-grid">
+          <div class="opt-field">
+            <label for="m-cappos">3. Caption Position</label>
+            <select id="m-cappos"></select>
+          </div>
+          <div class="opt-field">
+            <label for="m-cappreset">Caption Style</label>
+            <select id="m-cappreset">
+              <option value="iman">Iman Gadzhi Kinetic</option>
+              <option value="hormozi">Alex Hormozi Impact</option>
+              <option value="documentary">Documentary Editorial</option>
+              <option value="neon">Neon Bold</option>
+              <option value="comic">Comic Punch</option>
+              <option value="minimal">Clean Minimal</option>
+            </select>
+          </div>
+          <div class="opt-field">
+            <label for="m-capcolor">Caption Color</label>
+            <select id="m-capcolor">
+              <option value="purple">Neon Purple</option>
+              <option value="yellow">Luxury Gold / Yellow</option>
+              <option value="red">Viral Crimson Red</option>
+            </select>
+          </div>
+          <div class="opt-field">
+            <label for="m-ratio">Aspect Ratio</label>
+            <select id="m-ratio">
+              <option value="9:16">9:16 Vertical</option>
+              <option value="16:9">16:9 Widescreen</option>
+            </select>
+          </div>
+          <div class="opt-field">
+            <label for="m-f1">Filter Layer 1</label>
+            <select id="m-f1"></select>
+          </div>
+          <div class="opt-field">
+            <label for="m-f2">Filter Layer 2</label>
+            <select id="m-f2"></select>
+          </div>
+          <label class="toggle-chip" id="m-mirror-chip" style="justify-content:space-between; height:35px; padding:5px 11px;">
+            <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;">
+              <input type="checkbox" id="m-mirror" />
+              Mirror Video
+            </span>
+            <span class="toggle-state" id="m-mirror-state">OFF</span>
+          </label>
+        </div>
+
+        <div class="mode-config-box" style="margin-bottom:0; padding:12px 14px;">
+          <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:9px;">
+            <label class="toggle-chip" id="m-attn-chip" style="height:35px; padding:5px 12px;">
+              <input type="checkbox" id="m-attn-on" />
+              <span>4. Center White Box Card</span>
+              <span class="toggle-state" id="m-attn-state">OFF</span>
+            </label>
+            <input type="text" class="attn-input" id="m-attn-txt" style="flex:1; min-width:200px;" placeholder="Type custom intro/attention message for the box..." />
+          </div>
+          <div class="editor-controls-grid">
+            <div class="opt-field">
+              <label for="m-attn-pos">Box Position</label>
+              <select id="m-attn-pos">
+                <option value="center">Center of Screen</option>
+                <option value="upper">Upper-Center</option>
+                <option value="lower">Lower-Center</option>
+              </select>
+            </div>
+            <div class="opt-field">
+              <label for="m-attn-dur">Show For</label>
+              <select id="m-attn-dur"></select>
+            </div>
+            <div class="opt-field">
+              <label for="m-attn-style">Box Style</label>
+              <select id="m-attn-style"></select>
+            </div>
+            <div class="opt-field">
+              <label for="m-attn-font">Caption Text Font</label>
+              <select id="m-attn-font"></select>
+            </div>
+            <div class="opt-field">
+              <label for="m-attn-color">Text Color</label>
+              <select id="m-attn-color"></select>
+            </div>
+            <div class="opt-field">
+              <label for="m-attn-size">Text Size</label>
+              <select id="m-attn-size"></select>
+            </div>
+            <div class="opt-field">
+              <label for="m-attn-case">Text Case</label>
+              <select id="m-attn-case"></select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="editor-modal-foot">
+      <button class="btn-secondary" id="m-reset" type="button">Reset Preview</button>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button class="btn-secondary" id="m-cancel" type="button">Close</button>
+        <button class="shiny-cta shiny-coral" id="m-save" type="button" style="padding:0.65rem 1.35rem; font-size:0.86rem;">
+          <span>Apply &amp; Save to This Video &rarr;</span>
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1849,10 +2293,107 @@ const CAPTION_POSITION_OPTIONS_HTML = `
   <option value="top">Top Safe Zone</option>
 `;
 
+const CARD_DUR_OPTIONS_HTML = `
+  <option value="1">First 1 Second</option>
+  <option value="2">First 2 Seconds</option>
+  <option value="3">First 3 Seconds</option>
+  <option value="4" selected>First 4s (Intro)</option>
+  <option value="5">First 5 Seconds</option>
+  <option value="7">First 7 Seconds</option>
+  <option value="0">Entire Video</option>
+`;
+
+const CARD_STYLE_OPTIONS_HTML = `
+  <option value="white_box" selected>Classic White Box</option>
+  <option value="white_pill">White Pill Badge</option>
+  <option value="dark_neon">Dark Neon Box</option>
+  <option value="glass_dark">Frosted Dark Glass</option>
+  <option value="gold_luxury">Luxury Gold Border</option>
+  <option value="red_alert">Breaking Red Alert</option>
+`;
+
+const CARD_FONT_OPTIONS_HTML = `
+  <option value="bold_display" selected>Bold Display</option>
+  <option value="impact">Impact Punch</option>
+  <option value="clean_sans">Clean Modern Sans</option>
+  <option value="editorial_serif">Editorial Serif</option>
+  <option value="mono_tech">Typewriter Mono</option>
+`;
+
+const CARD_COLOR_OPTIONS_HTML = `
+  <option value="auto" selected>Auto Contrast</option>
+  <option value="black">Black</option>
+  <option value="white">White</option>
+  <option value="purple">Neon Purple</option>
+  <option value="gold">Gold</option>
+  <option value="red">Crimson Red</option>
+  <option value="blue">Sky Blue</option>
+  <option value="green">Emerald Green</option>
+`;
+
+const CARD_SIZE_OPTIONS_HTML = `
+  <option value="small">Small</option>
+  <option value="medium" selected>Medium</option>
+  <option value="large">Large</option>
+  <option value="xl">Extra Large</option>
+`;
+
+const CARD_CASE_OPTIONS_HTML = `
+  <option value="normal" selected>Normal Case</option>
+  <option value="upper">UPPERCASE</option>
+  <option value="title">Title Case</option>
+`;
+
+const CARD_FONT_CSS_MAP = {
+  bold_display: '"Plus Jakarta Sans", "Inter", sans-serif',
+  impact: 'Impact, "Arial Black", sans-serif',
+  clean_sans: '"Inter", "Segoe UI", Arial, sans-serif',
+  editorial_serif: 'Georgia, "Times New Roman", serif',
+  mono_tech: 'Consolas, "Courier New", monospace',
+};
+const CARD_SIZE_CSS_MAP = { small: "11.5px", medium: "13.5px", large: "16px", xl: "18.5px" };
+const CARD_COLOR_LIGHT_MAP = {
+  black: "#0E1016",
+  white: "#FFFFFF",
+  purple: "#8A22E2",
+  gold: "#C26C00",
+  red: "#DC1C26",
+  blue: "#0E74D6",
+  green: "#109448",
+};
+const CARD_COLOR_DARK_MAP = {
+  black: "#0E1016",
+  white: "#FFFFFF",
+  purple: "#D876FF",
+  gold: "#FACC41",
+  red: "#FF566C",
+  blue: "#49B8FF",
+  green: "#4ADE80",
+};
+
+function applyCardLiveStyling(boxEl, txtEl, opts) {
+  if (!boxEl || !txtEl) return;
+  const styleKey = opts.style || "white_box";
+  const isDark = ["dark_neon", "glass_dark", "gold_luxury", "red_alert"].includes(styleKey);
+  boxEl.className = `live-attn-box style-${styleKey}`;
+  boxEl.style.fontFamily = CARD_FONT_CSS_MAP[opts.fontStyle || "bold_display"] || CARD_FONT_CSS_MAP.bold_display;
+  boxEl.style.fontSize = CARD_SIZE_CSS_MAP[opts.fontSize || "medium"] || "13.5px";
+  const colMap = isDark ? CARD_COLOR_DARK_MAP : CARD_COLOR_LIGHT_MAP;
+  const cKey = opts.textColor || "auto";
+  boxEl.style.color = (cKey !== "auto" && colMap[cKey]) ? colMap[cKey] : (isDark ? "#FFFFFF" : "#0E1016");
+  const tCase = opts.textCase || "normal";
+  let raw = opts.text || "WAIT FOR THIS...";
+  if (tCase === "upper") raw = raw.toUpperCase();
+  else if (tCase === "title") raw = raw.replace(/\b\w/g, ch => ch.toUpperCase());
+  txtEl.textContent = raw;
+}
+
 function loadPrefs() {
   try {
     return Object.assign(
       {
+        mode: "viral",
+        aspectRatio: "9:16",
         preset: "iman",
         color: "purple",
         position: "bottom",
@@ -1860,11 +2401,30 @@ function loadPrefs() {
         filter2: "",
         mirror: false,
         maxClips: "12",
+        clipLength: "auto",
+        minLenSec: "15",
+        maxLenSec: "120",
+        partLenPreset: "300",
+        partMin: "5",
+        partSec: "0",
+        batchPartsCount: "0",
+        speed: "1.0",
+        attnOn: false,
+        attnText: "",
+        attnPos: "center",
+        attnDur: "2",
+        attnStyle: "white_box",
+        attnFont: "bold_display",
+        attnColor: "auto",
+        attnSize: "medium",
+        attnCase: "normal",
       },
-      JSON.parse(localStorage.getItem("shortly_prefs_v1") || "{}")
+      JSON.parse(localStorage.getItem("shortly_prefs_v2") || "{}")
     );
   } catch (_) {
     return {
+      mode: "viral",
+      aspectRatio: "9:16",
       preset: "iman",
       color: "purple",
       position: "bottom",
@@ -1872,6 +2432,14 @@ function loadPrefs() {
       filter2: "",
       mirror: false,
       maxClips: "12",
+      clipLength: "auto",
+      minLenSec: "15",
+      maxLenSec: "120",
+      partLenPreset: "300",
+      partMin: "5",
+      partSec: "0",
+      batchPartsCount: "0",
+      speed: "1.0",
     };
   }
 }
@@ -1879,7 +2447,7 @@ function loadPrefs() {
 function savePrefs(partial) {
   try {
     const merged = Object.assign(loadPrefs(), partial);
-    localStorage.setItem("shortly_prefs_v1", JSON.stringify(merged));
+    localStorage.setItem("shortly_prefs_v2", JSON.stringify(merged));
   } catch (_) {}
 }
 
@@ -1895,13 +2463,17 @@ function renderSidebar() {
 
   list.innerHTML = APP.projects.map(p => {
     const active = APP.view === "project" && APP.currentProjectName === p.name ? "active" : "";
+    const noun = p.mode === "batch" ? "Parts Ready" : "Shorts Ready";
+    const arBadge = p.aspect_ratio === "16:9" ? `<span class="badge sky">16:9</span>` : "";
+    const modeBadge = p.mode === "batch" ? `<span class="badge coral">Batch</span>` : "";
     return `
       <div class="proj-item ${active}" data-proj="${esc(p.name)}" role="button" tabindex="0">
         <button class="proj-del" data-del="${esc(p.name)}" type="button" title="Delete project">&times;</button>
         <div class="pname">${esc(p.person || p.name)}</div>
         <div class="pmeta">${esc(p.title || p.show_name || p.name)}</div>
         <div class="proj-badges">
-          ${p.rendered_count ? `<span class="badge green">${p.rendered_count} Shorts Ready</span>` : `<span class="badge coral">${p.candidate_count} viral picks</span>`}
+          ${p.rendered_count ? `<span class="badge green">${p.rendered_count} ${noun}</span>` : `<span class="badge coral">${p.candidate_count} picks</span>`}
+          ${modeBadge}${arBadge}
         </div>
       </div>
     `;
@@ -2055,8 +2627,13 @@ function startHeroWordRotation() {
 
 function renderNewProjectView() {
   document.getElementById("view-title").textContent = "Shortly Studio";
-  document.getElementById("view-sub").textContent = "Paste a YouTube link or local video — Shortly isolates balanced viral Shorts with Neural Face Tracking & Live Post-Render Editing.";
+  document.getElementById("view-sub").textContent = "Create Viral Clips or Split Full Videos into Batch Parts — in 9:16 Vertical or 16:9 Widescreen.";
   document.getElementById("project-tabs").style.display = "none";
+
+  const prefs = loadPrefs();
+  let curMode = prefs.mode === "batch" ? "batch" : "viral";
+  let curRatio = prefs.aspectRatio === "16:9" ? "16:9" : "9:16";
+  let probedInfo = null;
 
   document.getElementById("content").innerHTML = `
     ${renderJobBannerHtml()}
@@ -2065,7 +2642,7 @@ function renderNewProjectView() {
       <div class="hero-pill">
         <img src="/static/shortly-pulse.png" alt="Shortly Pulse" />
         <span class="pill-dot"></span>
-        <span>Neural Face Tracking &bull; Balanced 8–12 Viral Clips &bull; Live Post-Render Editor</span>
+        <span>Viral Clips &amp; Batch Parts &bull; 9:16 &amp; 16:9 &bull; Speed &amp; Editing Window</span>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
       </div>
 
@@ -2081,7 +2658,7 @@ function renderNewProjectView() {
       </h1>
 
       <p class="hero-sub">
-        Drop any podcast, interview, or local video. Shortly tracks active speaker faces in 9:16, finds the sweet-spot viral moments, and gives you a built-in post-render video editor to preview filters live, position captions (Center or Bottom), and add a White Center Attention Box Card.
+        Choose <b style="color:var(--cream);">Viral Clips</b> (AI picks top moments) or <b style="color:var(--cream);">Batch Videos</b> (split any long video into timed parts with captions &amp; tracking). Pick 9:16 or 16:9, count, length, and speed before generating — then fine-tune any clip in the <b style="color:var(--cream);">Editing Window</b>.
       </p>
 
       <div class="studio-dock">
@@ -2097,8 +2674,8 @@ function renderNewProjectView() {
             Browse File
           </button>
           <button class="shiny-cta" type="button" id="btn-start-auto">
-            <span>
-              Generate Viral Shorts
+            <span id="btn-start-label">
+              Generate Viral Clips
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
             </span>
           </button>
@@ -2106,6 +2683,121 @@ function renderNewProjectView() {
 
         <div class="opts-divider"></div>
 
+        <!-- Step 1: Generation Mode & Aspect Ratio (asked before generating for BOTH modes) -->
+        <div class="mode-ratio-bar">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted);">Mode</span>
+            <div class="seg-group" id="f-mode-group">
+              <button type="button" class="seg-btn ${curMode === "viral" ? "active" : ""}" data-mode="viral">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                Viral Clips
+              </button>
+              <button type="button" class="seg-btn ${curMode === "batch" ? "active is-batch" : ""}" data-mode="batch">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                Batch Videos (Split Parts)
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted);">Aspect Ratio</span>
+            <div class="seg-group" id="f-ratio-group">
+              <button type="button" class="seg-btn ${curRatio === "9:16" ? "active" : ""}" data-ratio="9:16">
+                <span class="ratio-icon r916"></span>
+                9:16 Vertical
+              </button>
+              <button type="button" class="seg-btn ${curRatio === "16:9" ? "active" : ""}" data-ratio="16:9">
+                <span class="ratio-icon r169"></span>
+                16:9 Widescreen
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2a: Viral Clips Quantity & Length Setup -->
+        <div class="mode-config-box" id="viral-config-box" style="display:${curMode === "viral" ? "block" : "none"};">
+          <div class="mode-config-grid">
+            <div class="opt-field">
+              <label for="f-max-clips">How Many Viral Clips?</label>
+              <select id="f-max-clips">
+                <option value="12" selected>8–12 Clips (Sweet Spot)</option>
+                <option value="10">Up to 10 Viral Clips</option>
+                <option value="8">Up to 8 Viral Clips</option>
+                <option value="5">Up to 5 Top Picks</option>
+                <option value="3">Up to 3 Top Picks</option>
+                <option value="15">Up to 15 (Max Cap)</option>
+              </select>
+            </div>
+            <div class="opt-field">
+              <label for="f-viral-len">Length Per Clip</label>
+              <select id="f-viral-len">
+                <option value="auto" selected>Auto (15s – 120s)</option>
+                <option value="short">Short (15s – 45s)</option>
+                <option value="medium">Medium (45s – 90s)</option>
+                <option value="long">Long (60s – 120s)</option>
+                <option value="extended">Extended (90s – 180s)</option>
+                <option value="custom">Custom Min / Max (sec)</option>
+              </select>
+            </div>
+            <div class="opt-field" id="f-viral-custom-len-wrap" style="display:none;">
+              <label>Custom Min / Max (Seconds)</label>
+              <div class="inline-dual">
+                <input type="number" id="f-min-len-sec" min="5" max="500" value="15" title="Min clip seconds" />
+                <span style="color:var(--muted);">to</span>
+                <input type="number" id="f-max-len-sec" min="10" max="600" value="120" title="Max clip seconds" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2b: Batch Parts Setup (Length per Part + Number of Parts + Live Calc) -->
+        <div class="mode-config-box" id="batch-config-box" style="display:${curMode === "batch" ? "block" : "none"}; border-color:rgba(242, 106, 62, 0.35);">
+          <div class="mode-config-grid">
+            <div class="opt-field">
+              <label for="f-part-len-preset">Length of Each Part</label>
+              <select id="f-part-len-preset">
+                <option value="60">1 Minute (60s)</option>
+                <option value="120">2 Minutes (120s)</option>
+                <option value="180">3 Minutes (180s)</option>
+                <option value="300" selected>5 Minutes (300s)</option>
+                <option value="600">10 Minutes (600s)</option>
+                <option value="custom">Custom Time (Min / Sec)</option>
+              </select>
+            </div>
+            <div class="opt-field" id="f-part-custom-wrap" style="display:none;">
+              <label>Custom Part Time (Min : Sec)</label>
+              <div class="inline-dual">
+                <input type="number" id="f-part-min" min="0" max="120" value="5" placeholder="Min" />
+                <span style="font-size:11px; color:var(--muted);">m</span>
+                <input type="number" id="f-part-sec" min="0" max="59" value="0" placeholder="Sec" />
+                <span style="font-size:11px; color:var(--muted);">s</span>
+              </div>
+            </div>
+            <div class="opt-field">
+              <label for="f-batch-parts-count">How Many Parts?</label>
+              <select id="f-batch-parts-count">
+                <option value="0" selected>All Parts (Full Video)</option>
+                <option value="2">2 Parts</option>
+                <option value="3">3 Parts</option>
+                <option value="4">4 Parts</option>
+                <option value="5">5 Parts</option>
+                <option value="6">6 Parts</option>
+                <option value="8">8 Parts</option>
+                <option value="10">10 Parts</option>
+                <option value="custom">Custom Part Count (1–50)</option>
+              </select>
+            </div>
+            <div class="opt-field" id="f-batch-custom-parts-wrap" style="display:none;">
+              <label for="f-batch-custom-parts">Custom Parts Count</label>
+              <input type="number" id="f-batch-custom-parts" min="1" max="50" value="4" />
+            </div>
+          </div>
+          <div class="batch-calc-hint" id="batch-calc-hint">
+            <span>Example: A 20-minute video at 5 min/part splits sequentially into 4 full-caption parts (Part 1 to Part 4).</span>
+          </div>
+        </div>
+
+        <!-- Step 3: Shared Style, Caption & Speed Controls -->
         <div class="quick-opts" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
           <div class="opt-field">
             <label for="f-cap-preset">Caption Style</label>
@@ -2127,19 +2819,22 @@ function renderNewProjectView() {
             </select>
           </div>
           <div class="opt-field">
-            <label for="f-cap-position">Initial Caption Position</label>
+            <label for="f-cap-position">Caption Position</label>
             <select id="f-cap-position">
               ${CAPTION_POSITION_OPTIONS_HTML}
             </select>
           </div>
           <div class="opt-field">
-            <label for="f-max-clips">Target Viral Clips (Balanced)</label>
-            <select id="f-max-clips">
-              <option value="12" selected>8–12 Clips (Sweet Spot)</option>
-              <option value="10">Up to 10 Viral Clips</option>
-              <option value="8">Up to 8 Viral Clips</option>
-              <option value="5">Up to 5 Top Picks</option>
-              <option value="15">Up to 15 (Max Cap)</option>
+            <label for="f-speed">Playback Speed</label>
+            <select id="f-speed">
+              <option value="0.75">0.75x (Slower)</option>
+              <option value="0.85">0.85x</option>
+              <option value="1.0" selected>1.0x (Normal)</option>
+              <option value="1.15">1.15x (Snappy)</option>
+              <option value="1.25">1.25x (Fast)</option>
+              <option value="1.5">1.5x (Turbo)</option>
+              <option value="1.75">1.75x</option>
+              <option value="2.0">2.0x</option>
             </select>
           </div>
         </div>
@@ -2159,22 +2854,76 @@ function renderNewProjectView() {
               <span class="toggle-state" id="f-mirror-state">OFF</span>
             </label>
           </div>
-          <span style="font-size:11.5px; color:var(--muted);">Preview &amp; apply Filters, Caption Position &amp; Center White Box after rendering!</span>
+          <span style="font-size:11.5px; color:var(--muted);">Open any finished clip in the <b style="color:var(--cream);">Editing Window</b> for filters, speed &amp; styling!</span>
+        </div>
+
+        <!-- Step 4: Start Text Box (Custom Intro Message & Styling) -->
+        <div class="start-box-panel">
+          <div style="display:flex; flex-wrap:wrap; align-items:center; gap:9px;">
+            <label class="toggle-chip" id="f-attn-chip" style="height:35px; padding:5px 12px;">
+              <input type="checkbox" id="f-attn-on" />
+              <span>Start Text Box (First Seconds)</span>
+              <span class="toggle-state" id="f-attn-state">OFF</span>
+            </label>
+            <input type="text" class="attn-input" id="f-attn-txt" style="flex:1; min-width:220px;" placeholder="Type custom intro message shown at the start (e.g. Wait for the end...)" />
+          </div>
+          <div id="f-attn-opts-wrap" style="display:none; margin-top:10px;">
+            <div class="editor-controls-grid">
+              <div class="opt-field">
+                <label for="f-attn-dur">Show At Start For</label>
+                <select id="f-attn-dur">${CARD_DUR_OPTIONS_HTML}</select>
+              </div>
+              <div class="opt-field">
+                <label for="f-attn-pos">Box Position</label>
+                <select id="f-attn-pos">
+                  <option value="center">Center of Screen</option>
+                  <option value="upper">Upper-Center</option>
+                  <option value="lower">Lower-Center</option>
+                </select>
+              </div>
+              <div class="opt-field">
+                <label for="f-attn-style">Box Style</label>
+                <select id="f-attn-style">${CARD_STYLE_OPTIONS_HTML}</select>
+              </div>
+              <div class="opt-field">
+                <label for="f-attn-font">Caption Text Font</label>
+                <select id="f-attn-font">${CARD_FONT_OPTIONS_HTML}</select>
+              </div>
+              <div class="opt-field">
+                <label for="f-attn-color">Text Color</label>
+                <select id="f-attn-color">${CARD_COLOR_OPTIONS_HTML}</select>
+              </div>
+              <div class="opt-field">
+                <label for="f-attn-size">Text Size</label>
+                <select id="f-attn-size">${CARD_SIZE_OPTIONS_HTML}</select>
+              </div>
+              <div class="opt-field">
+                <label for="f-attn-case">Text Case</label>
+                <select id="f-attn-case">${CARD_CASE_OPTIONS_HTML}</select>
+              </div>
+            </div>
+            <div class="start-box-preview">
+              <div class="live-attn-box style-white_box" id="f-attn-preview-box">
+                <div class="attn-bar"></div>
+                <div id="f-attn-preview-txt">Wait for this moment...</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
       <div class="feature-strip">
         <div class="feature-card">
-          <div class="ft-head"><span class="ft-dot"></span>Neural Active-Speaker Face Tracking</div>
-          <p>Tracks speaker faces dynamically in 9:16 portrait and snaps cleanly on podcast camera angle cuts.</p>
+          <div class="ft-head"><span class="ft-dot"></span>Viral Clips &amp; Sequential Batch Parts</div>
+          <p>Extract AI-curated viral highlights OR split any 20-minute video into timed sequential parts (e.g. 4 &times; 5 min).</p>
         </div>
         <div class="feature-card">
-          <div class="ft-head"><span class="ft-dot"></span>Runtime Filter &amp; Caption Editor</div>
-          <p>After your video renders, preview filters in real-time and move captions between Bottom, Center, or Top.</p>
+          <div class="ft-head"><span class="ft-dot"></span>9:16 Vertical &amp; 16:9 Widescreen</div>
+          <p>Choose vertical Shorts/Reels with active-speaker face tracking or crisp 16:9 widescreen before you generate.</p>
         </div>
         <div class="feature-card">
-          <div class="ft-head"><span class="ft-dot"></span>Center White Attention Box Card</div>
-          <p>Add a viral white box in the center of any rendered Short with custom attention-grabbing text in one click.</p>
+          <div class="ft-head"><span class="ft-dot"></span>Clean Popup Editing Window</div>
+          <p>Click &ldquo;Open in Editing Window&rdquo; on any video to adjust filters, speed, captions, and the Center White Box Card.</p>
         </div>
       </div>
     </section>
@@ -2183,11 +2932,41 @@ function renderNewProjectView() {
   startHeroWordRotation();
   bindJobBannerActions();
 
-  const prefs = loadPrefs();
-  document.getElementById("f-cap-preset").value = prefs.preset || "iman";
-  document.getElementById("f-cap-color").value = prefs.color || "purple";
-  document.getElementById("f-cap-position").value = prefs.position || "bottom";
-  document.getElementById("f-max-clips").value = prefs.maxClips || "12";
+  const viralBox = document.getElementById("viral-config-box");
+  const batchBox = document.getElementById("batch-config-box");
+  const startLabel = document.getElementById("btn-start-label");
+
+  const capPresetEl = document.getElementById("f-cap-preset");
+  const capColorEl = document.getElementById("f-cap-color");
+  const capPosEl = document.getElementById("f-cap-position");
+  const speedEl = document.getElementById("f-speed");
+  const maxClipsEl = document.getElementById("f-max-clips");
+  const viralLenEl = document.getElementById("f-viral-len");
+  const minLenEl = document.getElementById("f-min-len-sec");
+  const maxLenEl = document.getElementById("f-max-len-sec");
+  const viralCustomWrap = document.getElementById("f-viral-custom-len-wrap");
+
+  const partPresetEl = document.getElementById("f-part-len-preset");
+  const partCustomWrap = document.getElementById("f-part-custom-wrap");
+  const partMinEl = document.getElementById("f-part-min");
+  const partSecEl = document.getElementById("f-part-sec");
+  const batchPartsEl = document.getElementById("f-batch-parts-count");
+  const batchCustomWrap = document.getElementById("f-batch-custom-parts-wrap");
+  const batchCustomNumEl = document.getElementById("f-batch-custom-parts");
+  const batchHintEl = document.getElementById("batch-calc-hint");
+
+  capPresetEl.value = prefs.preset || "iman";
+  capColorEl.value = prefs.color || "purple";
+  capPosEl.value = prefs.position || "bottom";
+  speedEl.value = prefs.speed || "1.0";
+  maxClipsEl.value = prefs.maxClips || "12";
+  viralLenEl.value = prefs.clipLength || "auto";
+  minLenEl.value = prefs.minLenSec || "15";
+  maxLenEl.value = prefs.maxLenSec || "120";
+  partPresetEl.value = prefs.partLenPreset || "300";
+  partMinEl.value = prefs.partMin || "5";
+  partSecEl.value = prefs.partSec || "0";
+  batchPartsEl.value = prefs.batchPartsCount || "0";
 
   const ftCb = document.getElementById("f-face-tracking");
   const ftChip = document.getElementById("f-facetrack-chip");
@@ -2204,15 +2983,168 @@ function renderNewProjectView() {
   mirrorChip.classList.toggle("is-on", mirrorCb.checked);
   mirrorState.textContent = mirrorCb.checked ? "ON" : "OFF";
 
+  function getSelectedPartDurationSec() {
+    if (partPresetEl.value === "custom") {
+      const m = Math.max(0, parseInt(partMinEl.value || "0", 10) || 0);
+      const s = Math.max(0, parseInt(partSecEl.value || "0", 10) || 0);
+      return Math.max(10, m * 60 + s);
+    }
+    return Math.max(10, parseInt(partPresetEl.value || "300", 10) || 300);
+  }
+
+  function getSelectedBatchMaxParts() {
+    if (batchPartsEl.value === "custom") {
+      return Math.min(50, Math.max(1, parseInt(batchCustomNumEl.value || "4", 10) || 4));
+    }
+    return Math.max(0, parseInt(batchPartsEl.value || "0", 10) || 0);
+  }
+
+  function getSelectedViralMinMax() {
+    switch (viralLenEl.value) {
+      case "short": return [15, 45];
+      case "medium": return [45, 90];
+      case "long": return [60, 120];
+      case "extended": return [90, 180];
+      case "custom": {
+        const mn = Math.max(5, parseInt(minLenEl.value || "15", 10) || 15);
+        const mx = Math.max(mn + 5, parseInt(maxLenEl.value || "120", 10) || 120);
+        return [mn, mx];
+      }
+      default: return [15, 120];
+    }
+  }
+
+  function refreshModeAndHints() {
+    viralBox.style.display = curMode === "viral" ? "block" : "none";
+    batchBox.style.display = curMode === "batch" ? "block" : "none";
+    viralCustomWrap.style.display = viralLenEl.value === "custom" ? "flex" : "none";
+    partCustomWrap.style.display = partPresetEl.value === "custom" ? "flex" : "none";
+    batchCustomWrap.style.display = batchPartsEl.value === "custom" ? "flex" : "none";
+
+    document.querySelectorAll("#f-mode-group .seg-btn").forEach(b => {
+      const active = b.dataset.mode === curMode;
+      b.classList.toggle("active", active);
+      b.classList.toggle("is-batch", active && curMode === "batch");
+    });
+    document.querySelectorAll("#f-ratio-group .seg-btn").forEach(b => {
+      b.classList.toggle("active", b.dataset.ratio === curRatio);
+    });
+
+    const ctaText = curMode === "batch" ? "Generate Batch Videos" : "Generate Viral Clips";
+    if (startLabel) {
+      startLabel.innerHTML = `${ctaText} <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>`;
+    }
+
+    const pSec = getSelectedPartDurationSec();
+    const maxP = getSelectedBatchMaxParts();
+    if (probedInfo && probedInfo.duration > 0) {
+      const naturalCount = Math.min(50, Math.max(1, Math.ceil(probedInfo.duration / pSec)));
+      const effCount = maxP > 0 ? Math.min(maxP, naturalCount) : naturalCount;
+      batchHintEl.innerHTML = `<span>Detected <b>${fmtTime(probedInfo.duration)}</b> video &rarr; <b>${effCount} part(s)</b> of ~<b>${fmtTime(pSec)}</b> each (${curRatio}, ${speedEl.value}x).</span>`;
+    } else {
+      const sampleCount = maxP > 0 ? maxP : Math.max(1, Math.round(1200 / pSec));
+      batchHintEl.innerHTML = `<span>With <b>${fmtTime(pSec)}</b> per part, a 20:00 video splits sequentially into ~<b>${sampleCount} part(s)</b> (${curRatio}, ${speedEl.value}x).</span>`;
+    }
+  }
+
+  const fAttnOn = document.getElementById("f-attn-on");
+  const fAttnChip = document.getElementById("f-attn-chip");
+  const fAttnState = document.getElementById("f-attn-state");
+  const fAttnTxt = document.getElementById("f-attn-txt");
+  const fAttnOptsWrap = document.getElementById("f-attn-opts-wrap");
+  const fAttnDur = document.getElementById("f-attn-dur");
+  const fAttnPos = document.getElementById("f-attn-pos");
+  const fAttnStyle = document.getElementById("f-attn-style");
+  const fAttnFont = document.getElementById("f-attn-font");
+  const fAttnColor = document.getElementById("f-attn-color");
+  const fAttnSize = document.getElementById("f-attn-size");
+  const fAttnCase = document.getElementById("f-attn-case");
+  const fAttnPrevBox = document.getElementById("f-attn-preview-box");
+  const fAttnPrevTxt = document.getElementById("f-attn-preview-txt");
+
+  fAttnOn.checked = !!prefs.attnOn;
+  fAttnTxt.value = prefs.attnText || "";
+  fAttnDur.value = prefs.attnDur || "2";
+  fAttnPos.value = prefs.attnPos || "center";
+  fAttnStyle.value = prefs.attnStyle || "white_box";
+  fAttnFont.value = prefs.attnFont || "bold_display";
+  fAttnColor.value = prefs.attnColor || "auto";
+  fAttnSize.value = prefs.attnSize || "medium";
+  fAttnCase.value = prefs.attnCase || "normal";
+
+  function refreshStartBoxUI() {
+    const on = fAttnOn.checked;
+    fAttnChip.classList.toggle("is-on", on);
+    fAttnState.textContent = on ? "ON" : "OFF";
+    fAttnOptsWrap.style.display = on ? "block" : "none";
+    applyCardLiveStyling(fAttnPrevBox, fAttnPrevTxt, {
+      style: fAttnStyle.value,
+      fontStyle: fAttnFont.value,
+      textColor: fAttnColor.value,
+      fontSize: fAttnSize.value,
+      textCase: fAttnCase.value,
+      text: fAttnTxt.value.trim() || "Wait for this moment...",
+    });
+  }
+
   const persistHomePrefs = () => savePrefs({
-    preset: document.getElementById("f-cap-preset").value,
-    color: document.getElementById("f-cap-color").value,
-    position: document.getElementById("f-cap-position").value,
-    maxClips: document.getElementById("f-max-clips").value,
+    mode: curMode,
+    aspectRatio: curRatio,
+    preset: capPresetEl.value,
+    color: capColorEl.value,
+    position: capPosEl.value,
+    speed: speedEl.value,
+    maxClips: maxClipsEl.value,
+    clipLength: viralLenEl.value,
+    minLenSec: minLenEl.value,
+    maxLenSec: maxLenEl.value,
+    partLenPreset: partPresetEl.value,
+    partMin: partMinEl.value,
+    partSec: partSecEl.value,
+    batchPartsCount: batchPartsEl.value,
     mirror: mirrorCb.checked,
+    attnOn: fAttnOn.checked,
+    attnText: fAttnTxt.value,
+    attnDur: fAttnDur.value,
+    attnPos: fAttnPos.value,
+    attnStyle: fAttnStyle.value,
+    attnFont: fAttnFont.value,
+    attnColor: fAttnColor.value,
+    attnSize: fAttnSize.value,
+    attnCase: fAttnCase.value,
   });
-  ["f-cap-preset", "f-cap-color", "f-cap-position", "f-max-clips"].forEach(id => {
-    document.getElementById(id).addEventListener("change", persistHomePrefs);
+
+  fAttnOn.addEventListener("change", () => { refreshStartBoxUI(); persistHomePrefs(); });
+  fAttnTxt.addEventListener("input", () => {
+    if (!fAttnOn.checked && fAttnTxt.value.trim()) fAttnOn.checked = true;
+    refreshStartBoxUI();
+    persistHomePrefs();
+  });
+  [fAttnDur, fAttnPos, fAttnStyle, fAttnFont, fAttnColor, fAttnSize, fAttnCase].forEach(el => {
+    el.addEventListener("change", () => { refreshStartBoxUI(); persistHomePrefs(); });
+  });
+  refreshStartBoxUI();
+
+  document.querySelectorAll("#f-mode-group .seg-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      curMode = btn.dataset.mode === "batch" ? "batch" : "viral";
+      refreshModeAndHints();
+      persistHomePrefs();
+    });
+  });
+  document.querySelectorAll("#f-ratio-group .seg-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      curRatio = btn.dataset.ratio === "16:9" ? "16:9" : "9:16";
+      refreshModeAndHints();
+      persistHomePrefs();
+    });
+  });
+
+  [capPresetEl, capColorEl, capPosEl, speedEl, maxClipsEl, viralLenEl, minLenEl, maxLenEl, partPresetEl, partMinEl, partSecEl, batchPartsEl, batchCustomNumEl].forEach(el => {
+    el.addEventListener("change", () => {
+      refreshModeAndHints();
+      persistHomePrefs();
+    });
   });
   mirrorCb.addEventListener("change", () => {
     mirrorChip.classList.toggle("is-on", mirrorCb.checked);
@@ -2220,12 +3152,33 @@ function renderNewProjectView() {
     persistHomePrefs();
   });
 
+  let probeTimer = null;
+  async function probeCurrentSource() {
+    const src = document.getElementById("f-source").value.trim();
+    if (!src || src.length < 5) { probedInfo = null; refreshModeAndHints(); return; }
+    try {
+      const info = await apiPost("/api/probe-source", { source: src });
+      probedInfo = info;
+      refreshModeAndHints();
+    } catch (_) {}
+  }
+
+  document.getElementById("f-source").addEventListener("input", () => {
+    if (probeTimer) clearTimeout(probeTimer);
+    probeTimer = setTimeout(probeCurrentSource, 650);
+  });
+
   document.getElementById("btn-browse").addEventListener("click", async () => {
     try {
       const res = await apiPost("/api/browse-file", {});
-      if (res.path) document.getElementById("f-source").value = res.path;
+      if (res.path) {
+        document.getElementById("f-source").value = res.path;
+        probeCurrentSource();
+      }
     } catch (e) { showToast(e.message); }
   });
+
+  refreshModeAndHints();
 
   async function triggerAutopilot() {
     const src = document.getElementById("f-source").value.trim();
@@ -2235,18 +3188,38 @@ function renderNewProjectView() {
       return;
     }
     try {
-      const rawMax = parseInt(document.getElementById("f-max-clips").value, 10);
+      const spdVal = parseFloat(speedEl.value || "1.0") || 1.0;
+      const [minLen, maxLen] = getSelectedViralMinMax();
+      const rawMaxClips = curMode === "batch"
+        ? getSelectedBatchMaxParts()
+        : (parseInt(maxClipsEl.value, 10) || 12);
+
       const job = await apiPost("/api/jobs/autopilot", {
         source: src,
-        caption_preset: document.getElementById("f-cap-preset").value,
-        active_color: document.getElementById("f-cap-color").value,
-        caption_position: document.getElementById("f-cap-position").value,
-        max_clips: Number.isNaN(rawMax) ? 12 : Math.min(15, Math.max(1, rawMax)),
+        mode: curMode,
+        aspect_ratio: curRatio,
+        playback_speed: spdVal,
+        part_duration_sec: curMode === "batch" ? getSelectedPartDurationSec() : 0,
+        min_duration_sec: minLen,
+        max_duration_sec: maxLen,
+        caption_preset: capPresetEl.value,
+        active_color: capColorEl.value,
+        caption_position: capPosEl.value,
+        max_clips: rawMaxClips,
         hook_enabled: false,
         show_opening_title: false,
         face_tracking_enabled: ftCb.checked,
-        mirror_video: document.getElementById("f-mirror-video").checked,
+        mirror_video: mirrorCb.checked,
         video_filters: [],
+        attention_card_enabled: fAttnOn.checked,
+        attention_card_text: fAttnTxt.value.trim(),
+        attention_card_duration: parseFloat(fAttnDur.value) || 0,
+        attention_card_position: fAttnPos.value,
+        attention_card_style: fAttnStyle.value,
+        attention_card_font_style: fAttnFont.value,
+        attention_card_text_color: fAttnColor.value,
+        attention_card_font_size: fAttnSize.value,
+        attention_card_text_case: fAttnCase.value,
       });
       startPollingJob(job);
     } catch (e) { showToast(e.message); }
@@ -2339,6 +3312,25 @@ function renderReviewTab(p) {
           </select>
         </div>
         <div class="opt-field">
+          <label for="r-ratio">Aspect Ratio</label>
+          <select id="r-ratio">
+            <option value="9:16">9:16 Vertical</option>
+            <option value="16:9">16:9 Widescreen</option>
+          </select>
+        </div>
+        <div class="opt-field">
+          <label for="r-speed">Playback Speed</label>
+          <select id="r-speed">
+            <option value="0.75">0.75x</option>
+            <option value="1.0" selected>1.0x Normal</option>
+            <option value="1.15">1.15x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="1.75">1.75x</option>
+            <option value="2.0">2.0x</option>
+          </select>
+        </div>
+        <div class="opt-field">
           <label for="r-filter-1">Quality Filter 1</label>
           <select id="r-filter-1">
             ${FILTER_OPTIONS_HTML}
@@ -2367,6 +3359,8 @@ function renderReviewTab(p) {
   document.getElementById("r-cap-preset").value = rPrefs.preset || "iman";
   document.getElementById("r-cap-color").value = rPrefs.color || "purple";
   document.getElementById("r-cap-position").value = rPrefs.position || "bottom";
+  document.getElementById("r-ratio").value = (p.state && p.state.aspect_ratio) || rPrefs.aspectRatio || "9:16";
+  document.getElementById("r-speed").value = String((p.state && p.state.playback_speed) || rPrefs.speed || "1.0");
   document.getElementById("r-filter-1").value = rPrefs.filter1 || "";
   document.getElementById("r-filter-2").value = rPrefs.filter2 || "";
 
@@ -2462,6 +3456,8 @@ function renderReviewTab(p) {
         caption_preset: document.getElementById("r-cap-preset").value,
         active_color: document.getElementById("r-cap-color").value,
         caption_position: document.getElementById("r-cap-position").value,
+        aspect_ratio: document.getElementById("r-ratio").value,
+        playback_speed: parseFloat(document.getElementById("r-speed").value || "1.0") || 1.0,
         mirror_video: document.getElementById("r-mirror-video").checked,
         video_filters: rFilters,
       });
@@ -2470,240 +3466,446 @@ function renderReviewTab(p) {
   });
 }
 
+function closeEditingWindow() {
+  const backdrop = document.getElementById("editor-modal-backdrop");
+  const vid = document.getElementById("m-vid");
+  if (vid) {
+    try {
+      vid.pause();
+      vid.removeAttribute("src");
+      vid.load();
+    } catch (_) {}
+  }
+  if (backdrop) backdrop.classList.remove("open");
+  APP.editingTarget = null;
+}
+
+function openEditingWindow(projectName, o) {
+  const backdrop = document.getElementById("editor-modal-backdrop");
+  const modalBody = document.getElementById("editor-modal-body");
+  const subEl = document.getElementById("editor-modal-sub");
+  const shellEl = document.getElementById("m-shell");
+  const vidEl = document.getElementById("m-vid");
+  const badgeEl = document.getElementById("m-live-badge");
+  const attnOverlayEl = document.getElementById("m-live-attn");
+  const attnBoxEl = document.getElementById("m-live-attn-box");
+  const attnTxtPreviewEl = document.getElementById("m-live-attn-txt");
+  const capGuideEl = document.getElementById("m-live-cap-guide");
+  const capPillEl = document.getElementById("m-live-cap-pill");
+
+  const speedBadge = document.getElementById("m-speed-badge");
+  const speedRange = document.getElementById("m-speed-range");
+  const speedPillsRow = document.getElementById("m-speed-pills");
+  const pillsRow = document.getElementById("m-pills");
+
+  const capPosSel = document.getElementById("m-cappos");
+  const capPresetSel = document.getElementById("m-cappreset");
+  const capColorSel = document.getElementById("m-capcolor");
+  const ratioSel = document.getElementById("m-ratio");
+  const f1Sel = document.getElementById("m-f1");
+  const f2Sel = document.getElementById("m-f2");
+  const mirrorCb = document.getElementById("m-mirror");
+  const mirrorChip = document.getElementById("m-mirror-chip");
+  const mirrorState = document.getElementById("m-mirror-state");
+
+  const attnOnCb = document.getElementById("m-attn-on");
+  const attnChip = document.getElementById("m-attn-chip");
+  const attnState = document.getElementById("m-attn-state");
+  const attnTxtIn = document.getElementById("m-attn-txt");
+  const attnPosSel = document.getElementById("m-attn-pos");
+  const attnDurSel = document.getElementById("m-attn-dur");
+  const attnStyleSel = document.getElementById("m-attn-style");
+  const attnFontSel = document.getElementById("m-attn-font");
+  const attnColorSel = document.getElementById("m-attn-color");
+  const attnSizeSel = document.getElementById("m-attn-size");
+  const attnCaseSel = document.getElementById("m-attn-case");
+
+  if (!backdrop || !vidEl) return;
+
+  capPosSel.innerHTML = CAPTION_POSITION_OPTIONS_HTML;
+  f1Sel.innerHTML = FILTER_OPTIONS_HTML;
+  f2Sel.innerHTML = FILTER_OPTIONS_HTML;
+  attnDurSel.innerHTML = CARD_DUR_OPTIONS_HTML;
+  attnStyleSel.innerHTML = CARD_STYLE_OPTIONS_HTML;
+  attnFontSel.innerHTML = CARD_FONT_OPTIONS_HTML;
+  attnColorSel.innerHTML = CARD_COLOR_OPTIONS_HTML;
+  attnSizeSel.innerHTML = CARD_SIZE_OPTIONS_HTML;
+  attnCaseSel.innerHTML = CARD_CASE_OPTIONS_HTML;
+
+  const is16x9 = (o.aspect_ratio === "16:9") || ((o.output_width || 0) > (o.output_height || 0));
+  const savedState = {
+    caption_position: o.caption_position || "bottom",
+    caption_preset: o.caption_preset || "iman",
+    caption_color: o.caption_color || "purple",
+    aspect_ratio: is16x9 ? "16:9" : "9:16",
+    speed: Number(o.playback_speed || 1.0) || 1.0,
+    f1: (o.video_filters && o.video_filters[0]) || "",
+    f2: (o.video_filters && o.video_filters[1]) || "",
+    mirror: !!o.mirror_video,
+    attn_on: !!o.attention_card_enabled,
+    attn_txt: o.attention_card_text || o.hook_text || "",
+    attn_pos: o.attention_card_position || "center",
+    attn_dur: String(o.attention_card_duration !== undefined ? Math.round(o.attention_card_duration) : 4),
+    attn_style: o.attention_card_style || "white_box",
+    attn_font: o.attention_card_font_style || "bold_display",
+    attn_color: o.attention_card_text_color || "auto",
+    attn_size: o.attention_card_font_size || "medium",
+    attn_case: o.attention_card_text_case || "normal",
+  };
+
+  APP.editingTarget = { projectName, o };
+  subEl.textContent = `${o.clip_id.toUpperCase()} — ${o.hook_text || o.output_video}`;
+  vidEl.poster = o.thumbnail_url || "";
+  vidEl.src = o.video_url || "";
+
+  function updateModalPreview(showGuideOnPosChange = true) {
+    const curF1 = f1Sel.value;
+    const curF2 = f2Sel.value;
+    const curMirror = mirrorCb.checked;
+    const curCapPos = capPosSel.value;
+    const curRatio = ratioSel.value;
+    const curSpeed = Math.max(0.5, Math.min(2.0, parseFloat(speedRange.value || "1.0") || 1.0));
+    const curAttnOn = attnOnCb.checked;
+    const curAttnTxt = attnTxtIn.value.trim() || o.hook_text || "WAIT FOR THIS...";
+    const curAttnPos = attnPosSel.value;
+    const curAttnDur = parseFloat(attnDurSel.value) || 0;
+    const curAttnStyle = attnStyleSel.value;
+    const curAttnFont = attnFontSel.value;
+    const curAttnColor = attnColorSel.value;
+    const curAttnSize = attnSizeSel.value;
+    const curAttnCase = attnCaseSel.value;
+
+    modalBody.classList.toggle("is-16-9", curRatio === "16:9");
+    shellEl.classList.toggle("ratio-16-9", curRatio === "16:9");
+
+    speedBadge.textContent = `${curSpeed.toFixed(2)}x`;
+    if (speedPillsRow) {
+      speedPillsRow.querySelectorAll(".filter-pill-btn").forEach(btn => {
+        const bSpd = parseFloat(btn.dataset.spd || "1");
+        btn.classList.toggle("active", Math.abs(bSpd - curSpeed) < 0.02);
+      });
+    }
+    try {
+      vidEl.playbackRate = Math.max(0.25, Math.min(4.0, curSpeed / Math.max(0.5, savedState.speed)));
+    } catch (_) {}
+
+    if (pillsRow) {
+      pillsRow.querySelectorAll(".filter-pill-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.fpill === curF1);
+      });
+    }
+
+    mirrorChip.classList.toggle("is-on", curMirror);
+    mirrorState.textContent = curMirror ? "ON" : "OFF";
+    attnChip.classList.toggle("is-on", curAttnOn);
+    attnState.textContent = curAttnOn ? "ON" : "OFF";
+
+    const bakedSet = new Set([savedState.f1, savedState.f2].filter(Boolean));
+    const chosenList = [curF1, curF2].filter(Boolean);
+    const cssParts = [];
+    chosenList.forEach(fk => {
+      if (!bakedSet.has(fk) && LIVE_FILTER_CSS_MAP[fk]) {
+        cssParts.push(LIVE_FILTER_CSS_MAP[fk]);
+      }
+    });
+    vidEl.style.filter = cssParts.length ? cssParts.join(" ") : "none";
+    vidEl.style.transform = (curMirror !== savedState.mirror) ? "scaleX(-1)" : "none";
+
+    const attnModified =
+      curAttnOn !== savedState.attn_on ||
+      curAttnTxt !== savedState.attn_txt ||
+      curAttnPos !== savedState.attn_pos ||
+      String(curAttnDur) !== savedState.attn_dur ||
+      curAttnStyle !== savedState.attn_style ||
+      curAttnFont !== savedState.attn_font ||
+      curAttnColor !== savedState.attn_color ||
+      curAttnSize !== savedState.attn_size ||
+      curAttnCase !== savedState.attn_case;
+
+    const withinTime = curAttnDur <= 0 || vidEl.paused || vidEl.currentTime <= curAttnDur;
+    if (curAttnOn && (!savedState.attn_on || attnModified) && withinTime) {
+      attnOverlayEl.className = "live-attn-overlay active " + (
+        curAttnPos === "center" && curCapPos === "center" ? "pos-center-offset" : `pos-${curAttnPos}`
+      );
+      applyCardLiveStyling(attnBoxEl, attnTxtPreviewEl, {
+        style: curAttnStyle,
+        fontStyle: curAttnFont,
+        textColor: curAttnColor,
+        fontSize: curAttnSize,
+        textCase: curAttnCase,
+        text: curAttnTxt,
+      });
+    } else {
+      attnOverlayEl.classList.remove("active");
+    }
+
+    const capPosChanged = curCapPos !== savedState.caption_position;
+    if (showGuideOnPosChange && capPosChanged) {
+      capGuideEl.className = `live-cap-guide active pos-${curCapPos}`;
+      capPillEl.textContent = `New Caption Position: ${curCapPos.toUpperCase().replace("_", " ")}`;
+    } else {
+      capGuideEl.classList.remove("active");
+    }
+
+    const anyDirty =
+      curF1 !== savedState.f1 ||
+      curF2 !== savedState.f2 ||
+      curMirror !== savedState.mirror ||
+      capPosChanged ||
+      capPresetSel.value !== savedState.caption_preset ||
+      capColorSel.value !== savedState.caption_color ||
+      curRatio !== savedState.aspect_ratio ||
+      Math.abs(curSpeed - savedState.speed) >= 0.02 ||
+      attnModified;
+
+    badgeEl.classList.toggle("active", anyDirty);
+  }
+
+  function loadSavedIntoModal() {
+    capPosSel.value = savedState.caption_position;
+    capPresetSel.value = savedState.caption_preset;
+    capColorSel.value = savedState.caption_color;
+    ratioSel.value = savedState.aspect_ratio;
+    speedRange.value = savedState.speed.toFixed(2);
+    f1Sel.value = savedState.f1;
+    f2Sel.value = savedState.f2;
+    mirrorCb.checked = savedState.mirror;
+    attnOnCb.checked = savedState.attn_on;
+    attnTxtIn.value = savedState.attn_txt;
+    attnPosSel.value = savedState.attn_pos;
+    attnDurSel.value = ["0", "1", "2", "3", "4", "5", "7"].includes(savedState.attn_dur) ? savedState.attn_dur : "4";
+    attnStyleSel.value = savedState.attn_style;
+    attnFontSel.value = savedState.attn_font;
+    attnColorSel.value = savedState.attn_color;
+    attnSizeSel.value = savedState.attn_size;
+    attnCaseSel.value = savedState.attn_case;
+    updateModalPreview(false);
+  }
+
+  speedPillsRow.querySelectorAll(".filter-pill-btn").forEach(btn => {
+    btn.onclick = () => {
+      speedRange.value = parseFloat(btn.dataset.spd || "1.0").toFixed(2);
+      updateModalPreview(true);
+    };
+  });
+  speedRange.oninput = () => updateModalPreview(true);
+
+  pillsRow.querySelectorAll(".filter-pill-btn").forEach(btn => {
+    btn.onclick = () => {
+      f1Sel.value = btn.dataset.fpill || "";
+      if (!f1Sel.value) f2Sel.value = "";
+      updateModalPreview(true);
+    };
+  });
+
+  [capPosSel, capPresetSel, capColorSel, ratioSel, f1Sel, f2Sel, mirrorCb, attnOnCb, attnPosSel, attnDurSel, attnStyleSel, attnFontSel, attnColorSel, attnSizeSel, attnCaseSel].forEach(el => {
+    el.onchange = () => updateModalPreview(true);
+  });
+  attnTxtIn.oninput = () => {
+    if (!attnOnCb.checked && attnTxtIn.value.trim()) attnOnCb.checked = true;
+    updateModalPreview(true);
+  };
+  vidEl.ontimeupdate = () => updateModalPreview(false);
+  vidEl.onpause = () => updateModalPreview(false);
+
+  document.getElementById("m-reset").onclick = () => {
+    loadSavedIntoModal();
+    showToast(`Reset ${o.clip_id.toUpperCase()} preview.`);
+  };
+  document.getElementById("m-cancel").onclick = closeEditingWindow;
+  document.getElementById("editor-modal-close").onclick = closeEditingWindow;
+  backdrop.onclick = ev => { if (ev.target === backdrop) closeEditingWindow(); };
+
+  document.getElementById("m-save").onclick = async () => {
+    const cid = o.clip_id;
+    try {
+      document.querySelectorAll("#content video").forEach(v => {
+        try { v.pause(); v.removeAttribute("src"); v.load(); } catch (_) {}
+      });
+      const chosenFilters = [f1Sel.value, f2Sel.value].filter(Boolean);
+      const chosenSpeed = Math.max(0.5, Math.min(2.0, parseFloat(speedRange.value || "1.0") || 1.0));
+      const payload = {
+        name: projectName,
+        clip_id: cid,
+        caption_preset: capPresetSel.value,
+        active_color: capColorSel.value,
+        caption_position: capPosSel.value,
+        aspect_ratio: ratioSel.value,
+        playback_speed: chosenSpeed,
+        mirror_video: mirrorCb.checked,
+        video_filters: chosenFilters,
+        attention_card_enabled: attnOnCb.checked,
+        attention_card_text: attnTxtIn.value.trim() || o.hook_text || "",
+        attention_card_position: attnPosSel.value,
+        attention_card_duration: parseFloat(attnDurSel.value) || 0,
+        attention_card_style: attnStyleSel.value,
+        attention_card_font_style: attnFontSel.value,
+        attention_card_text_color: attnColorSel.value,
+        attention_card_font_size: attnSizeSel.value,
+        attention_card_text_case: attnCaseSel.value,
+      };
+      APP.lastEditedClipId = cid;
+      closeEditingWindow();
+      const job = await apiPost("/api/jobs/edit-clip", payload);
+      showToast(`Baking edits into ${cid.toUpperCase()}...`);
+      startPollingJob(job);
+    } catch (e) { showToast(e.message); }
+  };
+
+  loadSavedIntoModal();
+  backdrop.classList.add("open");
+}
+
 function renderOutputsTab(p) {
   const outputs = p.outputs || [];
+  const projModeLabel = (p.state && p.state.mode === "batch") ? "Batch Parts" : "Viral Clips";
+  const projRatioLabel = (p.state && p.state.aspect_ratio) || "9:16";
+
   let bodyHtml = `
     ${renderJobBannerHtml()}
-    <div class="enhance-panel">
-      <div class="enhance-panel-head">
-        <div>
-          <div class="enhance-panel-title"><span class="neon-dot"></span>Batch Post-Render Studio (Apply to All Shorts)</div>
-          <div style="font-size:12px; color:var(--muted); margin-top:4px;">
-            Use the <b style="color:var(--cream);">Live Video Editor</b> on each rendered Short below to preview filters in real-time, move captions (Center or Bottom), or add a White Center Attention Box — or batch-apply below.
-          </div>
-        </div>
-        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-          <button class="btn-secondary" id="btn-open-out" type="button">Open Output Folder</button>
-          <button class="shiny-cta shiny-coral" id="btn-rerender-outputs" type="button" style="padding:0.70rem 1.4rem; font-size:0.86rem;">
-            <span>Batch Apply to All Shorts &rarr;</span>
-          </button>
-        </div>
+    <div class="outputs-summary-bar">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <span class="badge coral">${esc(projModeLabel)}</span>
+        <span class="badge sky">${esc(projRatioLabel)}</span>
+        <span style="font-size:12px; color:var(--muted);">Click <b style="color:var(--cream);">Open in Editing Window</b> on any video to adjust filters, speed, captions &amp; cards.</span>
       </div>
-      <div class="enhance-grid">
-        <div class="opt-field">
-          <label for="o-cap-preset">Caption Style</label>
-          <select id="o-cap-preset">
-            <option value="iman" selected>Iman Gadzhi Kinetic</option>
-            <option value="hormozi">Alex Hormozi Impact</option>
-            <option value="documentary">Documentary Editorial</option>
-            <option value="neon">Neon Bold</option>
-            <option value="comic">Comic Punch</option>
-            <option value="minimal">Clean Minimal</option>
-          </select>
-        </div>
-        <div class="opt-field">
-          <label for="o-cap-color">Caption Color</label>
-          <select id="o-cap-color">
-            <option value="purple" selected>Neon Purple (Default)</option>
-            <option value="yellow">Luxury Gold / Yellow</option>
-            <option value="red">Viral Crimson Red</option>
-          </select>
-        </div>
-        <div class="opt-field">
-          <label for="o-cap-position">Caption Position</label>
-          <select id="o-cap-position">
-            ${CAPTION_POSITION_OPTIONS_HTML}
-          </select>
-        </div>
-        <div class="opt-field">
-          <label for="o-filter-1">Quality Filter 1</label>
-          <select id="o-filter-1">
-            ${FILTER_OPTIONS_HTML}
-          </select>
-        </div>
-        <div class="opt-field">
-          <label for="o-filter-2">Quality Filter 2</label>
-          <select id="o-filter-2">
-            ${FILTER_OPTIONS_HTML}
-          </select>
-        </div>
-        <label class="toggle-chip" id="o-mirror-chip" style="justify-content:space-between; height:36px;">
-          <span style="display:inline-flex;align-items:center;gap:7px;">
-            <input type="checkbox" id="o-mirror-video" />
-            Mirror Video
-          </span>
-          <span class="toggle-state" id="o-mirror-state">OFF</span>
-        </label>
-      </div>
-      <div style="margin-top:10px; font-size:11.5px; color:var(--muted);">
-        <b style="color:var(--cream);">Output Folder:</b> <span style="font-family:ui-monospace,monospace;">${esc(p.output_dir)}</span>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button class="btn-secondary" id="btn-open-out" type="button">Open Output Folder</button>
       </div>
     </div>
+
+    <details class="batch-rerender-details">
+      <summary>
+        <span class="neon-dot"></span>
+        Batch Re-Render All Videos (Apply Global Style / Ratio / Speed)
+      </summary>
+      <div class="enhance-panel" style="margin-bottom:0;">
+        <div class="enhance-panel-head">
+          <div class="enhance-panel-title"><span class="neon-dot"></span>Apply Settings to All Videos</div>
+          <button class="shiny-cta shiny-coral" id="btn-rerender-outputs" type="button" style="padding:0.65rem 1.35rem; font-size:0.84rem;">
+            <span>Re-Render All Videos &rarr;</span>
+          </button>
+        </div>
+        <div class="enhance-grid">
+          <div class="opt-field">
+            <label for="o-cap-preset">Caption Style</label>
+            <select id="o-cap-preset">
+              <option value="iman" selected>Iman Gadzhi Kinetic</option>
+              <option value="hormozi">Alex Hormozi Impact</option>
+              <option value="documentary">Documentary Editorial</option>
+              <option value="neon">Neon Bold</option>
+              <option value="comic">Comic Punch</option>
+              <option value="minimal">Clean Minimal</option>
+            </select>
+          </div>
+          <div class="opt-field">
+            <label for="o-cap-color">Caption Color</label>
+            <select id="o-cap-color">
+              <option value="purple" selected>Neon Purple (Default)</option>
+              <option value="yellow">Luxury Gold / Yellow</option>
+              <option value="red">Viral Crimson Red</option>
+            </select>
+          </div>
+          <div class="opt-field">
+            <label for="o-cap-position">Caption Position</label>
+            <select id="o-cap-position">
+              ${CAPTION_POSITION_OPTIONS_HTML}
+            </select>
+          </div>
+          <div class="opt-field">
+            <label for="o-ratio">Aspect Ratio</label>
+            <select id="o-ratio">
+              <option value="9:16">9:16 Vertical</option>
+              <option value="16:9">16:9 Widescreen</option>
+            </select>
+          </div>
+          <div class="opt-field">
+            <label for="o-speed">Playback Speed</label>
+            <select id="o-speed">
+              <option value="0.75">0.75x</option>
+              <option value="1.0" selected>1.0x Normal</option>
+              <option value="1.15">1.15x</option>
+              <option value="1.25">1.25x</option>
+              <option value="1.5">1.5x</option>
+              <option value="1.75">1.75x</option>
+              <option value="2.0">2.0x</option>
+            </select>
+          </div>
+          <div class="opt-field">
+            <label for="o-filter-1">Quality Filter 1</label>
+            <select id="o-filter-1">
+              ${FILTER_OPTIONS_HTML}
+            </select>
+          </div>
+          <div class="opt-field">
+            <label for="o-filter-2">Quality Filter 2</label>
+            <select id="o-filter-2">
+              ${FILTER_OPTIONS_HTML}
+            </select>
+          </div>
+          <label class="toggle-chip" id="o-mirror-chip" style="justify-content:space-between; height:36px;">
+            <span style="display:inline-flex;align-items:center;gap:7px;">
+              <input type="checkbox" id="o-mirror-video" />
+              Mirror Video
+            </span>
+            <span class="toggle-state" id="o-mirror-state">OFF</span>
+          </label>
+        </div>
+        <div style="margin-top:10px; font-size:11.5px; color:var(--muted);">
+          <b style="color:var(--cream);">Output Folder:</b> <span style="font-family:ui-monospace,monospace;">${esc(p.output_dir)}</span>
+        </div>
+      </div>
+    </details>
   `;
 
   if (!outputs.length) {
     bodyHtml += `
       <div class="panel" style="text-align:center; padding:44px;">
-        <div style="font-size:17px; font-weight:700; margin-bottom:14px; color:var(--cream);">Shorts are not rendered yet</div>
+        <div style="font-size:17px; font-weight:700; margin-bottom:14px; color:var(--cream);">Videos are not rendered yet</div>
         <button class="shiny-cta shiny-coral" id="btn-render-now" type="button">
-          <span>Render Approved Shorts Now &rarr;</span>
+          <span>Render Approved Videos Now &rarr;</span>
         </button>
       </div>
     `;
   } else {
-    bodyHtml += outputs.map(o => {
+    bodyHtml += outputs.map((o, idx) => {
       const cid = esc(o.clip_id);
-      const defaultCardText = o.attention_card_text || o.hook_text || "";
       const posBadge = (o.caption_position || "bottom").toUpperCase().replace("_", " ");
       const activeFiltersList = (o.video_filters || []).filter(Boolean);
+      const is16x9 = (o.aspect_ratio === "16:9") || ((o.output_width || 0) > (o.output_height || 0));
+      const spdNum = Number(o.playback_speed || 1.0) || 1.0;
       return `
-      <div class="output-card" id="out-card-${cid}">
+      <div class="output-card ${is16x9 ? "is-16-9" : ""}" id="out-card-${cid}">
         <div>
-          <div class="video-shell" id="shell-${cid}">
-            <div class="live-preview-badge" id="live-badge-${cid}">
-              <span class="neon-dot" style="width:7px;height:7px;"></span>
-              <span id="live-badge-txt-${cid}">Live Preview — Click Save to Bake</span>
-            </div>
-            <div class="live-attn-overlay pos-${esc(o.attention_card_position || "center")}" id="live-attn-${cid}">
-              <div class="live-attn-box style-${esc(o.attention_card_style || "white_box")}" id="live-attn-box-${cid}">
-                <div class="attn-bar"></div>
-                <div id="live-attn-txt-${cid}">${esc(defaultCardText)}</div>
-              </div>
-            </div>
-            <div class="live-cap-guide pos-${esc(o.caption_position || "bottom")}" id="live-cap-guide-${cid}">
-              <div class="live-cap-pill" id="live-cap-pill-${cid}">Captions: ${esc(posBadge)}</div>
-            </div>
+          <div class="video-shell ${is16x9 ? "ratio-16-9" : ""}" id="shell-${cid}">
             <video id="vid-${cid}" controls preload="metadata" poster="${esc(o.thumbnail_url)}" src="${esc(o.video_url)}"></video>
           </div>
           <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:12px; color:var(--muted);">
-            <span>Viral Score: <b style="color:#FFD3C4;">${o.score}/100</b></span>
+            <span>${p.state && p.state.mode === "batch" ? "Format:" : "Score:"} <b style="color:#FFD3C4;">${p.state && p.state.mode === "batch" ? (is16x9 ? "16:9" : "9:16") : (o.score + "/100")}</b></span>
             <span>Loudness: <b style="color:var(--green);">${o.lufs !== null ? o.lufs + " LUFS" : "N/A"}</b></span>
           </div>
-          <a class="btn-dl" id="dl-${cid}" href="${esc(o.download_url || o.video_url)}" download="${esc(o.output_video)}">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Download Short (.mp4)
-          </a>
+          <div class="card-bottom-actions">
+            <button class="btn-open-editor" type="button" data-open-edit="${idx}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              Open in Editing Window
+            </button>
+            <a class="btn-dl" id="dl-${cid}" href="${esc(o.download_url || o.video_url)}" download="${esc(o.output_video)}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download (.mp4)
+            </a>
+          </div>
         </div>
         <div>
-          <div style="margin-bottom:12px;">
+          <div style="margin-bottom:14px;">
             <div style="font-size:16px; font-weight:800; color:var(--sky-bright); display:flex; align-items:center; gap:7px; flex-wrap:wrap;">
               <span>${esc(o.clip_id.toUpperCase())} &mdash; ${esc(o.hook_text)}</span>
+              <span class="badge sky">${is16x9 ? "16:9" : "9:16"}</span>
+              ${Math.abs(spdNum - 1.0) >= 0.02 ? `<span class="badge coral">${spdNum.toFixed(2)}x SPEED</span>` : ""}
               <span class="badge coral">CAPTIONS: ${esc(posBadge)}</span>
               ${o.attention_card_enabled ? `<span class="badge green">WHITE BOX CARD: ON</span>` : ""}
               ${activeFiltersList.length ? `<span class="badge sky">FILTERS: ${esc(activeFiltersList.join(" + "))}</span>` : ""}
             </div>
-            <div style="font-size:12px; color:var(--muted); margin-top:3px;">${esc(o.output_video)} &bull; ${fmtTime(o.start)}-${fmtTime(o.end)} (${Math.round((o.end || 0) - (o.start || 0))}s) &bull; Active-Speaker Face Tracked</div>
-          </div>
-
-          <!-- Post-Render Interactive Live Video Editor for this Short -->
-          <div class="clip-editor-box" data-clip-editor="${cid}">
-            <div class="clip-editor-head">
-              <div class="clip-editor-title">
-                <span class="neon-dot"></span>
-                Live Video Editor &mdash; Runtime Filters, Caption Position &amp; Center White Box
-              </div>
-              <div style="display:flex; gap:8px; align-items:center;">
-                <button class="btn-secondary" id="ed-reset-${cid}" type="button" style="padding:6px 12px; font-size:11.5px;">Reset Preview</button>
-                <button class="shiny-cta shiny-coral" id="ed-save-${cid}" type="button" style="padding:0.50rem 1.05rem; font-size:0.78rem;">
-                  <span>Apply &amp; Save to This Video &rarr;</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- 1. Instant Click-to-Preview Filter Pills -->
-            <div style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); margin-bottom:5px;">
-              1. Click Filter to Preview Live on Video Player (Decide Before Saving)
-            </div>
-            <div class="filter-pills-row" id="ed-pills-${cid}">
-              <button type="button" class="filter-pill-btn" data-fpill="">Original (No Filter)</button>
-              <button type="button" class="filter-pill-btn" data-fpill="cinematic_grade">Cinematic Grade</button>
-              <button type="button" class="filter-pill-btn" data-fpill="sharp_hd">Crisp Sharp HD</button>
-              <button type="button" class="filter-pill-btn" data-fpill="warm_studio">Warm Studio</button>
-              <button type="button" class="filter-pill-btn" data-fpill="vibrant_pop">Vibrant Pop</button>
-              <button type="button" class="filter-pill-btn" data-fpill="denoise_clean">Studio Denoise</button>
-              <button type="button" class="filter-pill-btn" data-fpill="cool_documentary">Cool Documentary</button>
-              <button type="button" class="filter-pill-btn" data-fpill="bw_noir">B&amp;W Noir</button>
-            </div>
-
-            <!-- 2. Caption Position, Style, Color & Dual Filter Controls -->
-            <div class="editor-controls-grid">
-              <div class="opt-field">
-                <label for="ed-cappos-${cid}">2. Caption Position</label>
-                <select id="ed-cappos-${cid}">
-                  ${CAPTION_POSITION_OPTIONS_HTML}
-                </select>
-              </div>
-              <div class="opt-field">
-                <label for="ed-cappreset-${cid}">Caption Style</label>
-                <select id="ed-cappreset-${cid}">
-                  <option value="iman">Iman Gadzhi Kinetic</option>
-                  <option value="hormozi">Alex Hormozi Impact</option>
-                  <option value="documentary">Documentary Editorial</option>
-                  <option value="neon">Neon Bold</option>
-                  <option value="comic">Comic Punch</option>
-                  <option value="minimal">Clean Minimal</option>
-                </select>
-              </div>
-              <div class="opt-field">
-                <label for="ed-capcolor-${cid}">Caption Color</label>
-                <select id="ed-capcolor-${cid}">
-                  <option value="purple">Neon Purple</option>
-                  <option value="yellow">Luxury Gold / Yellow</option>
-                  <option value="red">Viral Crimson Red</option>
-                </select>
-              </div>
-              <div class="opt-field">
-                <label for="ed-f1-${cid}">Filter Layer 1</label>
-                <select id="ed-f1-${cid}">
-                  ${FILTER_OPTIONS_HTML}
-                </select>
-              </div>
-              <div class="opt-field">
-                <label for="ed-f2-${cid}">Filter Layer 2</label>
-                <select id="ed-f2-${cid}">
-                  ${FILTER_OPTIONS_HTML}
-                </select>
-              </div>
-              <label class="toggle-chip" id="ed-mirror-chip-${cid}" style="justify-content:space-between; height:35px; padding:5px 11px;">
-                <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;">
-                  <input type="checkbox" id="ed-mirror-${cid}" />
-                  Mirror
-                </span>
-                <span class="toggle-state" id="ed-mirror-state-${cid}">OFF</span>
-              </label>
-            </div>
-
-            <!-- 3. White Box in the Center with Attention-Grabbing Text -->
-            <div class="attn-editor-row">
-              <label class="toggle-chip" id="ed-attn-chip-${cid}" style="height:35px; padding:5px 12px;">
-                <input type="checkbox" id="ed-attn-on-${cid}" />
-                <span>3. Center White Box Card</span>
-                <span class="toggle-state" id="ed-attn-state-${cid}">OFF</span>
-              </label>
-              <input type="text" class="attn-input" id="ed-attn-txt-${cid}" value="${esc(defaultCardText)}" placeholder="Type attention-grabbing text for the white center box..." />
-              <div class="opt-field">
-                <select id="ed-attn-pos-${cid}" title="Card Position" style="height:35px;">
-                  <option value="center">Center of Screen</option>
-                  <option value="upper">Upper-Center</option>
-                  <option value="lower">Lower-Center</option>
-                </select>
-              </div>
-              <div class="opt-field">
-                <select id="ed-attn-dur-${cid}" title="Card Duration" style="height:35px;">
-                  <option value="4">First 4s (Intro)</option>
-                  <option value="7">First 7s</option>
-                  <option value="0">Entire Video</option>
-                  <option value="3">First 3s</option>
-                </select>
-              </div>
-              <div class="opt-field">
-                <select id="ed-attn-style-${cid}" title="Card Style" style="height:35px;">
-                  <option value="white_box">Classic White Box</option>
-                  <option value="white_pill">White Pill Badge</option>
-                  <option value="dark_neon">Dark Neon Box</option>
-                </select>
-              </div>
-            </div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px;">${esc(o.output_video)} &bull; ${fmtTime(o.start)}-${fmtTime(o.end)} (${Math.round((o.end || 0) - (o.start || 0))}s source)</div>
           </div>
 
           ${o.post_caption ? `
@@ -2738,15 +3940,26 @@ function renderOutputsTab(p) {
   document.getElementById("content").innerHTML = bodyHtml;
   bindJobBannerActions();
 
+  document.querySelectorAll("[data-open-edit]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.openEdit, 10);
+      if (outputs[idx]) openEditingWindow(p.name, outputs[idx]);
+    });
+  });
+
   const prefs = loadPrefs();
   const oPreset = document.getElementById("o-cap-preset");
   const oColor = document.getElementById("o-cap-color");
   const oPos = document.getElementById("o-cap-position");
+  const oRatio = document.getElementById("o-ratio");
+  const oSpeed = document.getElementById("o-speed");
   const oF1 = document.getElementById("o-filter-1");
   const oF2 = document.getElementById("o-filter-2");
   if (oPreset) oPreset.value = prefs.preset || "iman";
   if (oColor) oColor.value = prefs.color || "purple";
   if (oPos) oPos.value = prefs.position || "bottom";
+  if (oRatio) oRatio.value = (p.state && p.state.aspect_ratio) || prefs.aspectRatio || "9:16";
+  if (oSpeed) oSpeed.value = String((p.state && p.state.playback_speed) || prefs.speed || "1.0");
   if (oF1) oF1.value = prefs.filter1 || "";
   if (oF2) oF2.value = prefs.filter2 || "";
 
@@ -2761,215 +3974,19 @@ function renderOutputsTab(p) {
       preset: oPreset.value,
       color: oColor.value,
       position: oPos.value,
+      aspectRatio: oRatio ? oRatio.value : "9:16",
+      speed: oSpeed ? oSpeed.value : "1.0",
       filter1: oF1.value,
       filter2: oF2.value,
       mirror: oMirrorCb.checked,
     });
-    [oPreset, oColor, oPos, oF1, oF2].forEach(el => el && el.addEventListener("change", persistOutPrefs));
+    [oPreset, oColor, oPos, oRatio, oSpeed, oF1, oF2].forEach(el => el && el.addEventListener("change", persistOutPrefs));
     oMirrorCb.addEventListener("change", () => {
       oMirrorChip.classList.toggle("is-on", oMirrorCb.checked);
       oMirrorState.textContent = oMirrorCb.checked ? "ON" : "OFF";
       persistOutPrefs();
     });
   }
-
-  // Bind Per-Clip Interactive Live Video Editors
-  outputs.forEach(o => {
-    const cid = o.clip_id;
-    const vidEl = document.getElementById(`vid-${cid}`);
-    const badgeEl = document.getElementById(`live-badge-${cid}`);
-    const attnOverlayEl = document.getElementById(`live-attn-${cid}`);
-    const attnBoxEl = document.getElementById(`live-attn-box-${cid}`);
-    const attnTxtPreviewEl = document.getElementById(`live-attn-txt-${cid}`);
-    const capGuideEl = document.getElementById(`live-cap-guide-${cid}`);
-    const capPillEl = document.getElementById(`live-cap-pill-${cid}`);
-
-    const capPosSel = document.getElementById(`ed-cappos-${cid}`);
-    const capPresetSel = document.getElementById(`ed-cappreset-${cid}`);
-    const capColorSel = document.getElementById(`ed-capcolor-${cid}`);
-    const f1Sel = document.getElementById(`ed-f1-${cid}`);
-    const f2Sel = document.getElementById(`ed-f2-${cid}`);
-    const mirrorCb = document.getElementById(`ed-mirror-${cid}`);
-    const mirrorChip = document.getElementById(`ed-mirror-chip-${cid}`);
-    const mirrorState = document.getElementById(`ed-mirror-state-${cid}`);
-
-    const attnOnCb = document.getElementById(`ed-attn-on-${cid}`);
-    const attnChip = document.getElementById(`ed-attn-chip-${cid}`);
-    const attnState = document.getElementById(`ed-attn-state-${cid}`);
-    const attnTxtIn = document.getElementById(`ed-attn-txt-${cid}`);
-    const attnPosSel = document.getElementById(`ed-attn-pos-${cid}`);
-    const attnDurSel = document.getElementById(`ed-attn-dur-${cid}`);
-    const attnStyleSel = document.getElementById(`ed-attn-style-${cid}`);
-    const pillsRow = document.getElementById(`ed-pills-${cid}`);
-
-    if (!vidEl || !capPosSel) return;
-
-    const savedState = {
-      caption_position: o.caption_position || "bottom",
-      caption_preset: o.caption_preset || "iman",
-      caption_color: o.caption_color || "purple",
-      f1: (o.video_filters && o.video_filters[0]) || "",
-      f2: (o.video_filters && o.video_filters[1]) || "",
-      mirror: !!o.mirror_video,
-      attn_on: !!o.attention_card_enabled,
-      attn_txt: o.attention_card_text || o.hook_text || "",
-      attn_pos: o.attention_card_position || "center",
-      attn_dur: String(o.attention_card_duration !== undefined ? Math.round(o.attention_card_duration) : 4),
-      attn_style: o.attention_card_style || "white_box",
-    };
-
-    function loadSavedIntoInputs() {
-      capPosSel.value = savedState.caption_position;
-      capPresetSel.value = savedState.caption_preset;
-      capColorSel.value = savedState.caption_color;
-      f1Sel.value = savedState.f1;
-      f2Sel.value = savedState.f2;
-      mirrorCb.checked = savedState.mirror;
-      mirrorChip.classList.toggle("is-on", mirrorCb.checked);
-      mirrorState.textContent = mirrorCb.checked ? "ON" : "OFF";
-
-      attnOnCb.checked = savedState.attn_on;
-      attnChip.classList.toggle("is-on", attnOnCb.checked);
-      attnState.textContent = attnOnCb.checked ? "ON" : "OFF";
-      attnTxtIn.value = savedState.attn_txt;
-      attnPosSel.value = savedState.attn_pos;
-      attnDurSel.value = ["0", "3", "4", "7"].includes(savedState.attn_dur) ? savedState.attn_dur : "4";
-      attnStyleSel.value = savedState.attn_style;
-      updateLivePreview(false);
-    }
-
-    function updateLivePreview(showGuideOnPosChange = true) {
-      const curF1 = f1Sel.value;
-      const curF2 = f2Sel.value;
-      const curMirror = mirrorCb.checked;
-      const curCapPos = capPosSel.value;
-      const curAttnOn = attnOnCb.checked;
-      const curAttnTxt = attnTxtIn.value.trim() || o.hook_text || "WAIT FOR THIS...";
-      const curAttnPos = attnPosSel.value;
-      const curAttnDur = parseFloat(attnDurSel.value) || 0;
-      const curAttnStyle = attnStyleSel.value;
-
-      // Sync pill button highlight with Filter Layer 1
-      if (pillsRow) {
-        pillsRow.querySelectorAll(".filter-pill-btn").forEach(btn => {
-          btn.classList.toggle("active", btn.dataset.fpill === curF1);
-        });
-      }
-
-      mirrorChip.classList.toggle("is-on", curMirror);
-      mirrorState.textContent = curMirror ? "ON" : "OFF";
-      attnChip.classList.toggle("is-on", curAttnOn);
-      attnState.textContent = curAttnOn ? "ON" : "OFF";
-
-      // Compute unbaked CSS filter preview for filters not already baked into the MP4 file
-      const bakedSet = new Set([savedState.f1, savedState.f2].filter(Boolean));
-      const chosenList = [curF1, curF2].filter(Boolean);
-      const cssParts = [];
-      chosenList.forEach(fk => {
-        if (!bakedSet.has(fk) && LIVE_FILTER_CSS_MAP[fk]) {
-          cssParts.push(LIVE_FILTER_CSS_MAP[fk]);
-        }
-      });
-      vidEl.style.filter = cssParts.length ? cssParts.join(" ") : "none";
-      vidEl.style.transform = (curMirror !== savedState.mirror) ? "scaleX(-1)" : "none";
-
-      // Live White Box Center Attention Card Overlay (shown whenever card is enabled & either unbaked or modified)
-      const attnModified =
-        curAttnOn !== savedState.attn_on ||
-        curAttnTxt !== savedState.attn_txt ||
-        curAttnPos !== savedState.attn_pos ||
-        String(curAttnDur) !== savedState.attn_dur ||
-        curAttnStyle !== savedState.attn_style;
-
-      const withinTime = curAttnDur <= 0 || vidEl.paused || vidEl.currentTime <= curAttnDur;
-      if (curAttnOn && (!savedState.attn_on || attnModified) && withinTime) {
-        attnOverlayEl.className = "live-attn-overlay active " + (
-          curAttnPos === "center" && curCapPos === "center" ? "pos-center-offset" : `pos-${curAttnPos}`
-        );
-        attnBoxEl.className = `live-attn-box style-${curAttnStyle}`;
-        attnTxtPreviewEl.textContent = curAttnTxt;
-      } else {
-        attnOverlayEl.classList.remove("active");
-      }
-
-      // Live Caption Position Guide Overlay
-      const capPosChanged = curCapPos !== savedState.caption_position;
-      if (showGuideOnPosChange && capPosChanged) {
-        capGuideEl.className = `live-cap-guide active pos-${curCapPos}`;
-        capPillEl.textContent = `New Caption Position: ${curCapPos.toUpperCase().replace("_", " ")}`;
-      } else {
-        capGuideEl.classList.remove("active");
-      }
-
-      const anyDirty =
-        curF1 !== savedState.f1 ||
-        curF2 !== savedState.f2 ||
-        curMirror !== savedState.mirror ||
-        capPosChanged ||
-        capPresetSel.value !== savedState.caption_preset ||
-        capColorSel.value !== savedState.caption_color ||
-        attnModified;
-
-      badgeEl.classList.toggle("active", anyDirty);
-    }
-
-    if (pillsRow) {
-      pillsRow.querySelectorAll(".filter-pill-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-          f1Sel.value = btn.dataset.fpill || "";
-          if (!f1Sel.value) f2Sel.value = "";
-          updateLivePreview(true);
-        });
-      });
-    }
-
-    [capPosSel, capPresetSel, capColorSel, f1Sel, f2Sel, mirrorCb, attnOnCb, attnPosSel, attnDurSel, attnStyleSel].forEach(el => {
-      el.addEventListener("change", () => updateLivePreview(true));
-    });
-    attnTxtIn.addEventListener("input", () => {
-      if (!attnOnCb.checked && attnTxtIn.value.trim()) {
-        attnOnCb.checked = true;
-      }
-      updateLivePreview(true);
-    });
-    vidEl.addEventListener("timeupdate", () => updateLivePreview(false));
-    vidEl.addEventListener("pause", () => updateLivePreview(false));
-
-    document.getElementById(`ed-reset-${cid}`).addEventListener("click", () => {
-      loadSavedIntoInputs();
-      showToast(`Reset ${cid.toUpperCase()} preview to current saved video.`);
-    });
-
-    document.getElementById(`ed-save-${cid}`).addEventListener("click", async () => {
-      try {
-        try {
-          vidEl.pause();
-          vidEl.removeAttribute("src");
-          vidEl.load();
-        } catch (_) {}
-        APP.lastEditedClipId = cid;
-        const chosenFilters = [f1Sel.value, f2Sel.value].filter(Boolean);
-        const job = await apiPost("/api/jobs/edit-clip", {
-          name: p.name,
-          clip_id: cid,
-          caption_preset: capPresetSel.value,
-          active_color: capColorSel.value,
-          caption_position: capPosSel.value,
-          mirror_video: mirrorCb.checked,
-          video_filters: chosenFilters,
-          attention_card_enabled: attnOnCb.checked,
-          attention_card_text: attnTxtIn.value.trim() || o.hook_text || "",
-          attention_card_position: attnPosSel.value,
-          attention_card_duration: parseFloat(attnDurSel.value) || 0,
-          attention_card_style: attnStyleSel.value,
-        });
-        showToast(`Baking edits into ${cid.toUpperCase()}...`);
-        startPollingJob(job);
-      } catch (e) { showToast(e.message); }
-    });
-
-    loadSavedIntoInputs();
-  });
 
   async function triggerOutputRender(autoMode) {
     try {
@@ -2989,6 +4006,8 @@ function renderOutputsTab(p) {
         caption_preset: document.getElementById("o-cap-preset").value,
         active_color: document.getElementById("o-cap-color").value,
         caption_position: document.getElementById("o-cap-position").value,
+        aspect_ratio: oRatio ? oRatio.value : undefined,
+        playback_speed: oSpeed ? (parseFloat(oSpeed.value || "1.0") || 1.0) : 1.0,
         mirror_video: document.getElementById("o-mirror-video").checked,
         video_filters: oFilters,
       });
@@ -3006,6 +4025,10 @@ function renderOutputsTab(p) {
     btn.addEventListener("click", () => copyText(btn.dataset.copy));
   });
 }
+
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape") closeEditingWindow();
+});
 
 function renderMain() {
   if (APP.view === "new") renderNewProjectView();
